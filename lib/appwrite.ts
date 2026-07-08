@@ -1,9 +1,9 @@
-import notificationService from "@/services/notification.service";
 import {
   isCompatibleMatch,
   normalizeLifestyle,
   rankMatches,
 } from "@/lib/matching";
+import notificationService from "@/services/notification.service";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImageManipulator from "expo-image-manipulator";
@@ -482,6 +482,16 @@ export async function uploadImage(image: any) {
   }
 }
 
+export async function logout() {
+  try {
+    const result = await account.deleteSession("current");
+    return result;
+  } catch (error) {
+    console.error(error);
+    return false;
+  }
+}
+
 export async function AddListing(
   listing: {
     propertyName?: string;
@@ -816,34 +826,6 @@ export const getFavoritesByUser = async (favoriteDocumentId: string) => {
     throw error;
   }
 };
-
-// lib/appwrite.ts - Fix the logout function
-
-// lib/appwrite.ts
-
-export async function logout() {
-  try {
-    // First, check if there's an active session
-    try {
-      const session = await account.getSession("current");
-      if (session) {
-        await account.deleteSession("current");
-      }
-    } catch (sessionError) {
-      // No active session, that's fine
-      console.log("No active session found");
-    }
-    return { success: true };
-  } catch (error) {
-    console.error("Error logging out:", error);
-    // Even if there's an error, return success since the user is effectively logged out
-    return { success: true };
-  }
-}
-
-// ---------------- AVATAR ----------------
-
-// lib/appwrite.ts
 
 export async function updateUserAvatar(userId: string, avatarUrl: string) {
   try {

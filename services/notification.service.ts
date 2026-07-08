@@ -36,7 +36,10 @@ class NotificationService {
       }
 
       if (finalStatus !== "granted") {
-        console.log("Failed to get push token for push notification!");
+        console.error(
+          `❌ Push permission not granted (status: "${finalStatus}"). ` +
+            "On Android 13+, enable it in Settings > Apps > Notifications.",
+        );
         return null;
       }
 
@@ -242,7 +245,15 @@ class NotificationService {
         return false;
       }
 
-      const pushToken = tokens.documents[0].token;
+      // Send to ALL of the user's active devices, not just the first one
+      const messages = tokens.documents.map((tokenDoc) => ({
+        to: tokenDoc.token,
+        sound: "default",
+        title,
+        body,
+        data,
+        priority: "high",
+      }));
 
       const response = await fetch("https://exp.host/--/api/v2/push/send", {
         method: "POST",
@@ -250,17 +261,43 @@ class NotificationService {
           Accept: "application/json",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          to: pushToken,
-          sound: "default",
-          title,
-          body,
-          data,
-          priority: "high",
-        }),
+        body: JSON.stringify(messages),
       });
 
       const result = await response.json();
+
+      // Expo returns HTTP 200 even on delivery failure — check tickets
+      const tickets = Array.isArray(result.data) ? result.data : [result.data];
+      const errors = tickets.filter((t: any) => t?.status === "error");
+      if (errors.length > 0) {
+        console.error(
+          "❌ Expo push ticket errors:",
+          JSON.stringify(errors, null, 2),
+        );
+        // Auto-deactivate stale tokens so future sends skip them
+        for (let i = 0; i < tickets.length; i++) {
+          if (
+            tickets[i]?.status === "error" &&
+            tickets[i]?.details?.error === "DeviceNotRegistered"
+          ) {
+            const staleDoc = tokens.documents[i];
+            if (staleDoc) {
+              await databases
+                .updateDocument(
+                  config.databaseId!,
+                  config.pushTokensCollectionId!,
+                  staleDoc.$id,
+                  { isActive: false },
+                )
+                .catch(() => {});
+              console.log("🧹 Deactivated stale token for user:", userId);
+            }
+          }
+        }
+        // If at least one ticket succeeded, count it as sent
+        return errors.length < tickets.length;
+      }
+
       console.log("✅ Push notification sent:", result);
       return true;
     } catch (error) {
@@ -309,7 +346,18 @@ class NotificationService {
         body: JSON.stringify(messages),
       });
 
-      console.log("✅ Bulk push notifications sent:", await response.json());
+      const bulkResult = await response.json();
+      const bulkTickets = Array.isArray(bulkResult.data)
+        ? bulkResult.data
+        : [bulkResult.data];
+      const bulkErrors = bulkTickets.filter((t: any) => t?.status === "error");
+      if (bulkErrors.length > 0) {
+        console.error(
+          "❌ Bulk push ticket errors:",
+          JSON.stringify(bulkErrors, null, 2),
+        );
+      }
+      console.log("✅ Bulk push notifications sent:", bulkResult);
     } catch (error) {
       console.error("Error sending bulk notifications:", error);
     }

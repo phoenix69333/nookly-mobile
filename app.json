@@ -45,7 +45,7 @@
         "expo-notifications",
         {
           "sounds": [
-            "./assets/sound/notification.wav"
+            "./assets/sounds/notification.wav"
           ]
         }
       ],
@@ -74,7 +74,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "b3a2b393-24f3-4d67-9882-aec4c7316432"
+        "projectId": "d1ebd297-503d-44c0-9262-654dc01a48d4"
       }
     },
     "owner": "phoenix69"
