@@ -1,6 +1,5 @@
 // app/(root)/landHome.tsx
 import FeaturedModal from "@/components/FeaturedModal";
-
 import SearchModal from "@/components/SearchModal";
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -32,6 +31,8 @@ import useAuthStore from "@/store/auth.store";
 import { useNotificationStore } from "@/store/notification.store";
 import { getSavedAvatar } from "@/utils/avatarStorage";
 
+const STALE_TIME = 5 * 60 * 1000; // 5 minutes
+
 const getGreeting = () => {
   const hour = new Date().getHours();
   if (hour < 12) return "Good Morning";
@@ -60,12 +61,15 @@ export default function LandLordHome() {
 
   const params = useLocalSearchParams<{ filter?: string; refresh?: string }>();
   const colorScheme = useColorScheme();
-  const theme = Colors[colorScheme ?? "light"];
+  const theme = Colors[colorScheme?? "light"];
 
   const { loadNotifications, fetchAppwriteUnreadCount, totalUnreadCount } =
     useNotificationStore();
   const userId = user?.accountId;
 
+  // Track last fetch times to prevent spam
+  const lastNotificationsFetch = useRef<number>(0);
+  const lastFeaturedFetch = useRef<number>(0);
   const backPressCountRef = useRef(0);
 
   useFocusEffect(
@@ -77,28 +81,24 @@ export default function LandLordHome() {
           return true;
         },
       );
-
       return () => subscription.remove();
     }, []),
   );
-  useEffect(() => {
-    if (userId) {
-      loadNotifications(userId);
-      fetchAppwriteUnreadCount(userId);
-    }
-  }, [userId]);
 
-  // Single useFocusEffect for all focus-related operations
+  // Single useFocusEffect for all focus-related operations with stale check
   useFocusEffect(
     useCallback(() => {
-      // Refresh notification badge when screen is focused
-      if (userId) {
+      const now = Date.now();
+
+      // Only refresh notifications if stale > 5 min or first load
+      if (userId && now - lastNotificationsFetch.current > STALE_TIME) {
         console.log("🔄 Refreshing notification badge...");
         loadNotifications(userId);
         fetchAppwriteUnreadCount(userId);
+        lastNotificationsFetch.current = now;
       }
 
-      // Check for refresh param from AddListing screen
+      // Only refetch properties if explicitly requested via params
       if (params.refresh === "true" && user?.accountId) {
         console.log("🔄 Refreshing properties after adding new listing...");
         Promise.all([
@@ -110,10 +110,10 @@ export default function LandLordHome() {
             creatorId: user.accountId,
           }),
         ])
-          .then(() => {
+         .then(() => {
             console.log("✅ Properties refreshed successfully");
           })
-          .catch((error) => {
+         .catch((error) => {
             console.error("❌ Error refreshing properties:", error);
           });
 
@@ -166,15 +166,14 @@ export default function LandLordHome() {
       limit: 20,
       creatorId: user?.accountId,
     },
-    skip: false,
+    skip:!user?.accountId,
   });
 
   // Refetch when filter changes
   const filterRef = useRef(params.filter);
 
   useEffect(() => {
-    // Only refetch if the filter actually changed
-    if (filterRef.current !== params.filter && user?.accountId) {
+    if (filterRef.current!== params.filter && user?.accountId) {
       filterRef.current = params.filter;
       refetchMyProperties({
         filter: params.filter || "",
@@ -185,9 +184,10 @@ export default function LandLordHome() {
     }
   }, [params.filter, user?.accountId]);
 
-  // Pull to refresh
+  // Pull to refresh - forces all data
   const onRefresh = async () => {
     setRefreshing(true);
+    const now = Date.now();
     if (user?.accountId) {
       try {
         await Promise.all([
@@ -198,7 +198,12 @@ export default function LandLordHome() {
             limit: 20,
             creatorId: user?.accountId,
           }),
+          fetchBestProperties(true), // force refresh featured
+          loadNotifications(user.accountId),
+          fetchAppwriteUnreadCount(user.accountId),
         ]);
+        lastNotificationsFetch.current = now;
+        lastFeaturedFetch.current = now;
         console.log("✅ Manual refresh completed");
       } catch (error) {
         console.error("❌ Error during manual refresh:", error);
@@ -220,17 +225,24 @@ export default function LandLordHome() {
   const totalViews =
     myProperties?.reduce((sum, p) => sum + (p.views || 0), 0) || 0;
 
-  const isLoading = loadingMyProperties && !myProperties;
+  const isLoading = loadingMyProperties &&!myProperties;
 
-  // Fetch best properties for Featured section
-  const fetchBestProperties = async () => {
+  // Fetch best properties with stale check
+  const fetchBestProperties = async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastFeaturedFetch.current < STALE_TIME) {
+      console.log("⏭️ Skipping featured fetch - data fresh");
+      setLoadingFeatured(false);
+      return;
+    }
+
     try {
       setLoadingFeatured(true);
       const best = await getBestProperties(5);
       setFeaturedProperties(best);
+      lastFeaturedFetch.current = now;
     } catch (error) {
       console.error("Error fetching best properties:", error);
-      // Fallback to latest properties if ranking fails
       const allLatest = await getLatestProperties();
       const filtered = allLatest.filter((p) => p.isAvailable === true);
       setFeaturedProperties(filtered.slice(0, 5));
@@ -270,13 +282,13 @@ export default function LandLordHome() {
         {/* User info overlay */}
         <View className="absolute inset-0 flex-row items-center justify-between px-6 pt-2">
           <View className="flex-row items-center flex-1 mr-2">
-            {!loadingAvatar ? (
+            {!loadingAvatar? (
               <TouchableOpacity
                 onPress={() => router.push("/landProfile")}
                 className="shadow-lg"
               >
                 <Image
-                  source={user?.avatar ? { uri: user.avatar } : icons.person}
+                  source={user?.avatar? { uri: user.avatar } : icons.person}
                   className="w-14 h-14 rounded-full border-2 border-white"
                 />
               </TouchableOpacity>
@@ -299,7 +311,7 @@ export default function LandLordHome() {
                 ellipsizeMode="tail"
               >
                 {user?.name?.length > 20
-                  ? `${user.name.substring(0, 18)}...`
+                 ? `${user.name.substring(0, 18)}...`
                   : user?.name || "Landlord"}
               </Text>
             </View>
@@ -317,7 +329,7 @@ export default function LandLordHome() {
             {totalUnreadCount > 0 && (
               <View className="absolute -top-1 -right-1 bg-red-500 rounded-full min-w-[18px] h-[18px] px-1 items-center justify-center">
                 <Text className="text-white text-xs font-bold">
-                  {totalUnreadCount > 99 ? "99+" : totalUnreadCount}
+                  {totalUnreadCount > 99? "99+" : totalUnreadCount}
                 </Text>
               </View>
             )}
@@ -448,75 +460,72 @@ export default function LandLordHome() {
 
             {/* Featured Section - Using Best Properties Ranking */}
             <View className="mb-6">
-              {/* Featured Section */}
-              <View className="mb-6">
-                <View className="flex-row items-center justify-between mb-4 px-1">
-                  <View>
-                    <Text
-                      className="text-2xl font-rubik-bold"
-                      style={{ color: theme.text }}
-                    >
-                      Featured
-                    </Text>
-                    <Text className="text-sm text-gray-500 font-rubik mt-0.5">
-                      Top ranked properties for tenants
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => setFeaturedModalVisible(true)}
-                    className="bg-primary-50 px-4 py-2 rounded-full"
+              <View className="flex-row items-center justify-between mb-4 px-1">
+                <View>
+                  <Text
+                    className="text-2xl font-rubik-bold"
+                    style={{ color: theme.text }}
                   >
-                    <Text
-                      className="text-sm font-rubik-medium text-primary-600"
-                      style={{ color: theme.primary[300] }}
-                    >
-                      See all
-                    </Text>
-                  </TouchableOpacity>
+                    Featured
+                  </Text>
+                  <Text className="text-sm text-gray-500 font-rubik mt-0.5">
+                    Top ranked properties for tenants
+                  </Text>
                 </View>
-
-                {loadingFeatured ? (
-                  <View className="h-48 items-center justify-center">
-                    <ActivityIndicator
-                      size="large"
-                      color={theme.primary[300]}
-                    />
-                  </View>
-                ) : featuredProperties.length === 0 ? (
-                  <View
-                    className="h-48 items-center justify-center rounded-2xl"
-                    style={{ backgroundColor: theme.surface }}
+                <TouchableOpacity
+                  onPress={() => setFeaturedModalVisible(true)}
+                  className="bg-primary-50 px-4 py-2 rounded-full"
+                >
+                  <Text
+                    className="text-sm font-rubik-medium text-primary-600"
+                    style={{ color: theme.primary[300] }}
                   >
-                    <Image
-                      source={icons.house}
-                      className="w-12 h-12 opacity-30 mb-2"
-                      style={{ tintColor: theme.muted }}
-                    />
-                    <Text
-                      className="text-sm font-rubik"
-                      style={{ color: theme.muted }}
-                    >
-                      No featured properties yet
-                    </Text>
-                  </View>
-                ) : (
-                  <FlatList
-                    data={featuredProperties}
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ paddingHorizontal: 4 }}
-                    keyExtractor={(item) => item.$id}
-                    renderItem={({ item, index }) => (
-                      <View className="mr-4 relative">
-                        <FeaturedCard
-                          item={item}
-                          onPress={() => handleCardPress(item.$id)}
-                        />
-                      </View>
-                    )}
-                  />
-                )}
+                    See all
+                  </Text>
+                </TouchableOpacity>
               </View>
+
+              {loadingFeatured? (
+                <View className="h-48 items-center justify-center">
+                  <ActivityIndicator
+                    size="large"
+                    color={theme.primary[300]}
+                  />
+                </View>
+              ) : featuredProperties.length === 0? (
+                <View
+                  className="h-48 items-center justify-center rounded-2xl"
+                  style={{ backgroundColor: theme.surface }}
+                >
+                  <Image
+                    source={icons.house}
+                    className="w-12 h-12 opacity-30 mb-2"
+                    style={{ tintColor: theme.muted }}
+                  />
+                  <Text
+                    className="text-sm font-rubik"
+                    style={{ color: theme.muted }}
+                  >
+                    No featured properties yet
+                  </Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={featuredProperties}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingHorizontal: 4 }}
+                  keyExtractor={(item) => item.$id}
+                  renderItem={({ item, index }) => (
+                    <View className="mr-4 relative">
+                      <FeaturedCard
+                        item={item}
+                        onPress={() => handleCardPress(item.$id)}
+                      />
+                    </View>
+                  )}
+                />
+              )}
             </View>
 
             {/* My properties header */}
@@ -543,11 +552,11 @@ export default function LandLordHome() {
           </View>
         )}
         ListEmptyComponent={
-          isLoading ? (
+          isLoading? (
             <View className="items-center justify-center py-10">
               <ActivityIndicator size="large" color={theme.title} />
             </View>
-          ) : myProperties?.length === 0 ? (
+          ) : myProperties?.length === 0? (
             <View className="items-center justify-center py-16 px-5">
               <Image
                 source={icons.house}

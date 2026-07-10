@@ -1,11 +1,13 @@
-// app/(root)/explore.tsx
+import ExploreMapView from "@/components/ExploreMapView";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Image,
+  ScrollView,
   Text,
+  TextInput,
   TouchableOpacity,
   useColorScheme,
   View,
@@ -13,55 +15,130 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Card } from "@/components/Cards";
+import { FacilitiesFilter } from "@/components/FacilitiesFilter";
 import Filters from "@/components/Filters";
 import NoResults from "@/components/NoResults";
 import { PriceFilterButton } from "@/components/PriceFilterButton";
 import SearchModal from "@/components/SearchModal";
-import icons from "@/constants/icons";
-
 import { Colors } from "@/constants/Colors";
-import { getPropertiesWithPriceFilter, PriceRange } from "@/lib/appwrite";
+import icons from "@/constants/icons";
+import { useSmartAlerts } from "@/hooks/useSmartAlerts";
+import { isAccredited } from "@/lib/accreditation";
+import { getPropertiesWithFilters, PriceRange } from "@/lib/appwrite";
 import { useAppwrite } from "@/lib/useAppwrite";
+import { Ionicons } from "@expo/vector-icons";
+
+const BEDROOM_OPTIONS = [1, 2, 3, 4, 5];
 
 const Explore = () => {
-  const params = useLocalSearchParams<{ filter?: string; query?: string }>();
+  const params = useLocalSearchParams<{
+    filter?: string;
+    query?: string;
+    location?: string;
+  }>();
+
   const [searchModalVisible, setSearchModalVisible] = useState(false);
-  const [selectedPriceRange, setSelectedPriceRange] = useState<
-    PriceRange | undefined
-  >();
-  const [selectedCustomPrice, setSelectedCustomPrice] = useState<
-    { min: number; max: number } | undefined
-  >();
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Filter states
+  const [selectedPriceRange, setSelectedPriceRange] = useState<PriceRange | undefined>();
+  const [selectedCustomPrice, setSelectedCustomPrice] = useState<{ min: number; max: number } | undefined>();
+  const [selectedFacilities, setSelectedFacilities] = useState<string[]>([]);
+  const [selectedBedrooms, setSelectedBedrooms] = useState<number | undefined>();
+
+  // Debounce location input
+  const [locationInput, setLocationInput] = useState<string>(params.location || "");
+  const [selectedLocation, setSelectedLocation] = useState<string>(params.location || "");
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ✅ Accredited filter state
+  const [showAccreditedOnly, setShowAccreditedOnly] = useState(false);
+
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? "light"];
+  const { alerts, saveAlert, deleteAlert } = useSmartAlerts();
+
+  // Debounce location: wait 500ms after user stops typing
+  useEffect(() => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      setSelectedLocation(locationInput);
+    }, 500);
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, [locationInput]);
+
+const { data: allProperties, loading: mapLoading } = useAppwrite({
+    fn: (p: any) => getPropertiesWithFilters(p),
+    params: { filter: "", query: "", limit: 10000 },
+    ttl: 60000,
+    skip: false,
+  });
 
   const {
     data: properties,
     refetch,
     loading,
   } = useAppwrite({
-    fn: (params: any) => getPropertiesWithPriceFilter(params),
+    fn: (params: any) => getPropertiesWithFilters(params),
     params: {
       filter: params.filter || "",
       query: params.query || "",
       limit: 20,
-      priceRange: selectedPriceRange as any,
+      priceRange: selectedPriceRange,
       customPrice: selectedCustomPrice,
+      facilities: selectedFacilities,
+      bedrooms: selectedBedrooms,
+      location: selectedLocation,
     },
     ttl: 30000,
     skip: false,
   });
 
-  // Refetch when filter, query, or price range changes
+  // Refetch when any filter changes
   useEffect(() => {
     refetch({
       filter: params.filter || "",
       query: params.query || "",
       limit: 20,
-      priceRange: selectedPriceRange as any,
+      priceRange: selectedPriceRange,
       customPrice: selectedCustomPrice,
+      facilities: selectedFacilities,
+      bedrooms: selectedBedrooms,
+      location: selectedLocation,
     });
-  }, [params.filter, params.query, selectedPriceRange, selectedCustomPrice]);
+
+    // Save as smart alert if any filter is active
+    const hasActiveFilters =
+      params.query ||
+      params.filter ||
+      selectedFacilities.length ||
+      selectedPriceRange ||
+      selectedCustomPrice ||
+      selectedBedrooms ||
+      selectedLocation;
+
+    if (hasActiveFilters) {
+      saveAlert({
+        query: params.query,
+        filter: params.filter,
+        bedrooms: selectedBedrooms,
+        priceRange: selectedPriceRange,
+        customPrice: selectedCustomPrice,
+        location: selectedLocation,
+        facilities: selectedFacilities,
+      });
+    }
+  }, [
+    params.filter,
+    params.query,
+    selectedPriceRange,
+    selectedCustomPrice,
+    selectedFacilities,
+    selectedBedrooms,
+    selectedLocation,
+  ]);
 
   const handleCardPress = (id: string) => router.push(`/properties/${id}`);
 
@@ -73,19 +150,59 @@ const Explore = () => {
     setSelectedCustomPrice(customPrice);
   };
 
-  // Get active filter count for badge
+  const toggleFacility = (id: string) => {
+    setSelectedFacilities(prev =>
+      prev.includes(id) ? prev.filter(f => f !== id) : [...prev, id]
+    );
+  };
+
+  const applyAlert = (alert: any) => {
+    router.setParams({
+      query: alert.query || "",
+      filter: alert.filter || ""
+    });
+    setSelectedBedrooms(alert.bedrooms);
+    setSelectedPriceRange(alert.priceRange);
+    setSelectedCustomPrice(alert.customPrice);
+    setLocationInput(alert.location || "");
+    setSelectedLocation(alert.location || "");
+    setSelectedFacilities(alert.facilities || []);
+  };
+
   const getActiveFilterCount = () => {
     let count = 0;
     if (params.filter && params.filter !== "All") count++;
     if (selectedPriceRange || selectedCustomPrice) count++;
     if (params.query) count++;
+    if (selectedFacilities.length) count++;
+    if (selectedBedrooms) count++;
+    if (selectedLocation) count++;
+    if (showAccreditedOnly) count++; // ✅ Count accredited filter
     return count;
   };
+
+  const clearAllFilters = () => {
+    router.setParams({ filter: "", query: "" });
+    setSelectedPriceRange(undefined);
+    setSelectedCustomPrice(undefined);
+    setSelectedFacilities([]);
+    setSelectedBedrooms(undefined);
+    setLocationInput("");
+    setSelectedLocation("");
+    setShowAccreditedOnly(false); // ✅ Reset accredited filter
+  };
+
+  // ✅ Filter properties by accreditation
+  const filteredProperties = showAccreditedOnly
+    ? properties?.filter((property) => 
+        isAccredited(property.reviews, property.$createdAt)
+      )
+    : properties;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }}>
       <FlatList
-        data={properties}
+        data={filteredProperties}
         numColumns={2}
         renderItem={({ item }) => (
           <Card item={item} onPress={() => handleCardPress(item.$id)} />
@@ -104,11 +221,30 @@ const Explore = () => {
             </View>
           ) : !properties || properties.length === 0 ? (
             <NoResults />
+          ) : showAccreditedOnly && filteredProperties?.length === 0 ? (
+            <View className="items-center justify-center py-20 px-8">
+              <View className="w-20 h-20 rounded-full items-center justify-center mb-4" style={{ backgroundColor: theme.primary[100] }}>
+                <Ionicons name="checkmark-circle" size={40} color={theme.primary[300]} />
+              </View>
+              <Text className="text-lg font-rubik-bold text-center" style={{ color: theme.title }}>
+                No Accredited Properties Found
+              </Text>
+              <Text className="text-sm text-center mt-2" style={{ color: theme.muted }}>
+                Try adjusting your filters or view all properties
+              </Text>
+              <TouchableOpacity
+                onPress={() => setShowAccreditedOnly(false)}
+                className="mt-4 px-6 py-3 rounded-full"
+                style={{ backgroundColor: theme.primary[300] }}
+              >
+                <Text className="text-white font-rubik-bold">View All Properties</Text>
+              </TouchableOpacity>
+            </View>
           ) : null
         }
-        ListHeaderComponent={() => (
+        ListHeaderComponent={
           <View className="px-5 pt-5 pb-2">
-            {/* Hero Section */}
+            
             <View className="mb-4">
               <Text
                 className="text-xl text-center font-rubik-bold mt-1"
@@ -118,7 +254,14 @@ const Explore = () => {
               </Text>
             </View>
 
-            {/* Search Button (opens modal) */}
+            {/* ✅ Map banner - opens full map with ALL properties */}
+            <ExploreMapView
+              properties={allProperties}
+              loading={mapLoading}
+              onPropertyPress={handleCardPress}
+            />
+
+            {/* Search Button */}
             <TouchableOpacity
               onPress={() => setSearchModalVisible(true)}
               className="flex-row items-center px-4 py-3 rounded-full mb-3"
@@ -142,11 +285,7 @@ const Explore = () => {
                   : "Search properties..."}
               </Text>
               {params.query && (
-                <TouchableOpacity
-                  onPress={() => {
-                    router.setParams({ query: "" });
-                  }}
-                >
+                <TouchableOpacity onPress={() => router.setParams({ query: "" })}>
                   <Image
                     source={icons.close}
                     className="w-5 h-5"
@@ -156,100 +295,198 @@ const Explore = () => {
               )}
             </TouchableOpacity>
 
-            {/* Filter Row - Type Filter and Price Filter */}
+            {/* Filter Row */}
             <View className="flex-row items-center justify-between mb-3">
               <View className="flex-1">
                 <Filters />
               </View>
-              <View className="ml-2">
+              <View className="ml-2 flex-row gap-2">
+                {/* ✅ Accredited Filter Button */}
+                <TouchableOpacity
+                  onPress={() => setShowAccreditedOnly(!showAccreditedOnly)}
+                  className="px-3 py-2 rounded-full flex-row items-center gap-1"
+                  style={{
+                    backgroundColor: showAccreditedOnly ? "#10B981" : theme.surface,
+                    borderWidth: 1,
+                    borderColor: showAccreditedOnly ? "#10B981" : theme.muted + "40",
+                  }}
+                >
+                  <Ionicons 
+                    name="checkmark-circle" 
+                    size={16} 
+                    color={showAccreditedOnly ? "#FFFFFF" : theme.muted} 
+                  />
+                  <Text
+                    className="text-xs font-rubik-medium"
+                    style={{ color: showAccreditedOnly ? "#FFFFFF" : theme.muted }}
+                  >
+                    Verified
+                  </Text>
+                </TouchableOpacity>
+
                 <PriceFilterButton
                   onPriceChange={handlePriceChange}
                   currentPriceRange={selectedPriceRange}
                   currentCustomPrice={selectedCustomPrice}
                 />
+                <TouchableOpacity
+                  onPress={() => setShowAdvanced(!showAdvanced)}
+                  className="px-3 py-2 rounded-full flex-row items-center"
+                  style={{
+                    backgroundColor: showAdvanced ? theme.primary[300] : theme.surface,
+                    borderWidth: 1,
+                    borderColor: theme.muted + "40",
+                  }}
+                >
+                  <Image
+                    source={icons.filter}
+                    className="w-4 h-4"
+                    style={{ tintColor: showAdvanced ? "#fff" : theme.muted }}
+                  />
+                </TouchableOpacity>
               </View>
             </View>
+
+            {/* Advanced Filters */}
+            {showAdvanced && (
+              <View className="mb-3 p-3 rounded-xl" style={{ backgroundColor: theme.surface }}>
+                <Text className="text-sm font-rubik-medium mb-2" style={{ color: theme.text }}>
+                  Location
+                </Text>
+                <View
+                  className="flex-row items-center px-3 py-2 rounded-full mb-3"
+                  style={{ backgroundColor: theme.background, borderWidth: 1, borderColor: theme.muted + "40" }}
+                >
+                  <Image source={icons.location} className="w-4 h-4" style={{ tintColor: theme.muted }} />
+                  <TextInput
+                    placeholder="Enter city or area..."
+                    placeholderTextColor={theme.muted}
+                    value={locationInput}
+                    onChangeText={setLocationInput}
+                    className="flex-1 ml-2 text-sm"
+                    style={{ color: theme.text }}
+                  />
+                  {locationInput !== "" && (
+                    <TouchableOpacity onPress={() => setLocationInput("")}>
+                      <Image source={icons.close} className="w-5 h-5" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <Text className="text-sm font-rubik-medium mb-2" style={{ color: theme.text }}>
+                  Bedrooms
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-3">
+                  {BEDROOM_OPTIONS.map((num) => (
+                    <TouchableOpacity
+                      key={num}
+                      onPress={() => setSelectedBedrooms(selectedBedrooms === num ? undefined : num)}
+                      className="mr-2 px-4 py-2 rounded-full"
+                      style={{
+                        backgroundColor: selectedBedrooms === num ? theme.primary[300] : theme.background,
+                        borderWidth: 1,
+                        borderColor: theme.muted + "40",
+                      }}
+                    >
+                      <Text
+                        className="text-sm font-rubik-medium"
+                        style={{ color: selectedBedrooms === num ? "#fff" : theme.text }}
+                      >
+                        {num}+
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                <Text className="text-sm font-rubik-medium mb-2" style={{ color: theme.text }}>
+                  Facilities
+                </Text>
+                <FacilitiesFilter selected={selectedFacilities} onToggle={toggleFacility} />
+              </View>
+            )}
 
             {/* Active Filters Display */}
             {getActiveFilterCount() > 0 && (
               <View className="flex-row flex-wrap gap-2 mt-2 mb-3">
-                {params.filter && params.filter !== "All" && (
-                  <View
-                    className="px-2 py-1 rounded-full"
-                    style={{ backgroundColor: theme.primary[100] }}
-                  ></View>
+                {showAccreditedOnly && (
+                  <View className="px-2 py-1 rounded-full flex-row items-center" style={{ backgroundColor: "#10B98120" }}>
+                    <Ionicons name="checkmark-circle" size={12} color="#10B981" />
+                    <Text className="text-xs ml-1" style={{ color: "#10B981" }}>
+                      Accredited Only
+                    </Text>
+                    <TouchableOpacity onPress={() => setShowAccreditedOnly(false)} className="ml-1">
+                      <Image source={icons.close} className="w-3 h-3" style={{ tintColor: "#10B981" }} />
+                    </TouchableOpacity>
+                  </View>
                 )}
+                {selectedLocation !== "" && (
+                  <View className="px-2 py-1 rounded-full flex-row items-center" style={{ backgroundColor: theme.primary[100] }}>
+                    <Text className="text-xs" style={{ color: theme.primary[300] }}>
+                      📍 {selectedLocation}
+                    </Text>
+                    <TouchableOpacity onPress={() => { setLocationInput(""); setSelectedLocation(""); }} className="ml-1">
+                      <Image source={icons.close} className="w-3 h-3" style={{ tintColor: theme.primary[300] }} />
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {selectedBedrooms && (
+                  <View className="px-2 py-1 rounded-full flex-row items-center" style={{ backgroundColor: theme.primary[100] }}>
+                    <Text className="text-xs" style={{ color: theme.primary[300] }}>
+                      {selectedBedrooms}+ beds
+                    </Text>
+                    <TouchableOpacity onPress={() => setSelectedBedrooms(undefined)} className="ml-1">
+                      <Image source={icons.close} className="w-3 h-3" style={{ tintColor: theme.primary[300] }} />
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {selectedFacilities.map((f) => (
+                  <View key={f} className="px-2 py-1 rounded-full flex-row items-center" style={{ backgroundColor: theme.primary[100] }}>
+                    <Text className="text-xs" style={{ color: theme.primary[300] }}>
+                      {f}
+                    </Text>
+                    <TouchableOpacity onPress={() => toggleFacility(f)} className="ml-1">
+                      <Image source={icons.close} className="w-3 h-3" style={{ tintColor: theme.primary[300] }} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
                 {(selectedPriceRange || selectedCustomPrice) && (
-                  <View
-                    className="px-2 py-1 rounded-full flex-row items-center"
-                    style={{ backgroundColor: theme.primary[100] }}
-                  >
-                    <Text
-                      className="text-xs"
-                      style={{ color: theme.primary[300] }}
-                    >
+                  <View className="px-2 py-1 rounded-full flex-row items-center" style={{ backgroundColor: theme.primary[100] }}>
+                    <Text className="text-xs" style={{ color: theme.primary[300] }}>
                       {selectedCustomPrice
                         ? `$${selectedCustomPrice.min} - $${selectedCustomPrice.max}`
                         : selectedPriceRange?.label}
                     </Text>
-                    <TouchableOpacity
-                      onPress={() => handlePriceChange(undefined, undefined)}
-                      className="ml-1"
-                    >
-                      <Image
-                        source={icons.close}
-                        className="w-3 h-3"
-                        style={{ tintColor: theme.primary[300] }}
-                      />
+                    <TouchableOpacity onPress={() => handlePriceChange(undefined, undefined)} className="ml-1">
+                      <Image source={icons.close} className="w-3 h-3" style={{ tintColor: theme.primary[300] }} />
                     </TouchableOpacity>
                   </View>
                 )}
                 {params.query && (
-                  <View
-                    className="px-2 py-1 rounded-full flex-row items-center"
-                    style={{ backgroundColor: theme.primary[100] }}
-                  >
-                    <Text
-                      className="text-xs"
-                      style={{ color: theme.primary[300] }}
-                    >
+                  <View className="px-2 py-1 rounded-full flex-row items-center" style={{ backgroundColor: theme.primary[100] }}>
+                    <Text className="text-xs" style={{ color: theme.primary[300] }}>
                       {params.query}
                     </Text>
-                    <TouchableOpacity
-                      onPress={() => router.setParams({ query: "" })}
-                      className="ml-1"
-                    >
-                      <Image
-                        source={icons.close}
-                        className="w-3 h-3"
-                        style={{ tintColor: theme.primary[300] }}
-                      />
+                    <TouchableOpacity onPress={() => router.setParams({ query: "" })} className="ml-1">
+                      <Image source={icons.close} className="w-3 h-3" style={{ tintColor: theme.primary[300] }} />
                     </TouchableOpacity>
                   </View>
                 )}
-                <TouchableOpacity
-                  onPress={() => {
-                    router.setParams({ filter: "", query: "" });
-                    handlePriceChange(undefined, undefined);
-                  }}
-                >
-                  <Text
-                    className="text-xs"
-                    style={{ color: theme.primary[300] }}
-                  >
+                <TouchableOpacity onPress={clearAllFilters}>
+                  <Text className="text-xs" style={{ color: theme.primary[300] }}>
                     Clear all
                   </Text>
                 </TouchableOpacity>
               </View>
             )}
 
-            {/* Results Count */}
             <View className="flex-row justify-between items-center mt-2 mb-2">
-              <Text
-                className="text-xl font-rubik-bold"
-                style={{ color: theme.title }}
-              >
-                {properties?.length || 0} Properties
+              <Text className="text-xl font-rubik-bold" style={{ color: theme.title }}>
+                {filteredProperties?.length || 0} Properties
+                {showAccreditedOnly && (
+                  <Text className="text-sm font-rubik-medium ml-2" style={{ color: "#10B981" }}>
+                    ✓ Verified
+                  </Text>
+                )}
               </Text>
               {loading && (
                 <Text className="text-sm" style={{ color: theme.muted }}>
@@ -258,7 +495,7 @@ const Explore = () => {
               )}
             </View>
           </View>
-        )}
+        }
       />
 
       <SearchModal

@@ -20,6 +20,7 @@ import {
   Query,
   Storage,
 } from "react-native-appwrite";
+import { isAccredited } from "./accreditation";
 
 const createValidAppwriteId = (): string => {
   let id = ID.unique();
@@ -50,6 +51,9 @@ interface PropertyData {
   reviews?: string;
   isAvailable?: boolean;
   creatorId?: string;
+   totalSlots?: number;        // Total slots (set by landlord)
+  occupiedSlots?: number;     // Currently occupied
+  availableSlots?: number;    // Calculated: totalSlots - occupiedSlots
 }
 
 // Add after your existing interfaces
@@ -482,15 +486,6 @@ export async function uploadImage(image: any) {
   }
 }
 
-export async function logout() {
-  try {
-    const result = await account.deleteSession("current");
-    return result;
-  } catch (error) {
-    console.error(error);
-    return false;
-  }
-}
 
 export async function AddListing(
   listing: {
@@ -501,6 +496,8 @@ export async function AddListing(
     price: number;
     area: number;
     curfew: string;
+    latitude?: number; 
+    longitude?: number;
     isAvailable: boolean;
     roomFor: number;
     bedrooms: number;
@@ -509,15 +506,29 @@ export async function AddListing(
     image1?: string;
     image2?: string;
     image3?: string;
-
     agent?: string;
     creatorId?: string;
     priceThreshold?: number;
+    totalSlots?: number;
+    occupiedSlots?: number;
+    availableSlots?: number;
   },
   onSuccess?: (newListing: any) => void,
 ) {
   try {
     console.log("Creating listing with agent (user $id):", listing.agent);
+
+    // ✅ OR operation: Available if manually set as available OR has available slots
+    const manualAvailability = listing.isAvailable ?? true;
+    const hasAvailableSlots = (listing.totalSlots || 0) > 0;
+    const isAvailable = manualAvailability || hasAvailableSlots;
+
+    console.log("📊 Availability calculation:", {
+      manualAvailability,
+      hasAvailableSlots,
+      isAvailable,
+      totalSlots: listing.totalSlots,
+    });
 
     const response = await databases.createDocument(
       config.databaseId!,
@@ -531,17 +542,22 @@ export async function AddListing(
         price: listing.price,
         area: listing.area,
         roomFor: listing.roomFor,
+        latitude: listing.latitude ?? null, 
+        longitude: listing.longitude ?? null,
         bedrooms: listing.bedrooms,
         bathrooms: listing.bathrooms,
         facilities: listing.facilities,
         curfew: listing.curfew,
-        isAvailable: listing.isAvailable ?? true,
+        isAvailable: isAvailable, // ✅ OR operation result
         image1: listing.image1 || null,
         image2: listing.image2 || null,
         image3: listing.image3 || null,
         agent: listing.agent || null,
         creatorId: listing.creatorId || null,
         priceThreshold: listing.priceThreshold || 0,
+        totalSlots: listing.totalSlots || 0,
+        occupiedSlots: 0,
+        availableSlots: listing.totalSlots || 0,
       },
     );
 
@@ -549,70 +565,78 @@ export async function AddListing(
       id: response.$id,
       agent: response.agent,
       priceThreshold: response.priceThreshold,
+      totalSlots: response.totalSlots,
+      availableSlots: response.availableSlots,
+      isAvailable: response.isAvailable,
+      hasVideos: !!(response.video1 || response.video2 || response.video3),
     });
 
-    // 🚀 SEND PUSH NOTIFICATIONS TO TENANTS IN THE SAME AREA
-    try {
-      // Extract city/area from address
-      const addressParts = listing.address.split(",");
-      const city =
-        addressParts.length >= 2
-          ? `${addressParts[addressParts.length - 2]?.trim()}, ${addressParts[addressParts.length - 1]?.trim()}`
-          : addressParts[addressParts.length - 1]?.trim() || "Unknown";
+    // 🚀 SEND PUSH NOTIFICATIONS TO TENANTS (only if available)
+    if (isAvailable) {
+      try {
+        // Extract city/area from address
+        const addressParts = listing.address.split(",");
+        const city =
+          addressParts.length >= 2
+            ? `${addressParts[addressParts.length - 2]?.trim()}, ${addressParts[addressParts.length - 1]?.trim()}`
+            : addressParts[addressParts.length - 1]?.trim() || "Unknown";
 
-      // Get all tenants
-      const tenants = await databases.listDocuments(
-        config.databaseId!,
-        config.usersCollectionId!,
-        [Query.equal("userMode", "tenant")],
-      );
-
-      // Filter tenants who might be interested (based on saved searches or preferences)
-      const interestedTenants = tenants.documents.filter((tenant) => {
-        // If priceThreshold is set, only notify tenants whose budget matches
-        if (listing.priceThreshold && listing.priceThreshold > 0) {
-          // You would need to check tenant's budget from their preferences/profile
-          // For now, we'll include all tenants and let them decide
-          return true;
-        }
-        return true; // Send to all tenants for now
-      });
-
-      // Send notifications in batches to avoid overwhelming the API
-      const batchSize = 10;
-      for (let i = 0; i < interestedTenants.length; i += batchSize) {
-        const batch = interestedTenants.slice(i, i + batchSize);
-        const userIds = batch.map((tenant) => tenant.accountId);
-
-        await notificationService.sendBulkNotification(
-          userIds,
-          "New Property Listed!",
-          `${listing.propertyName} - $${listing.price}/month in ${city}`,
-          {
-            type: "property",
-            propertyId: response.$id,
-            screen: "explore",
-            priceThreshold: listing.priceThreshold, // Include in notification data
-          },
+        // Get all tenants
+        const tenants = await databases.listDocuments(
+          config.databaseId!,
+          config.usersCollectionId!,
+          [Query.equal("userMode", "tenant")],
         );
+
+        // Filter tenants who might be interested
+        const interestedTenants = tenants.documents.filter((tenant) => {
+          // If priceThreshold is set, only notify tenants whose budget matches
+          if (listing.priceThreshold && listing.priceThreshold > 0) {
+            // You would need to check tenant's budget from their preferences/profile
+            return true;
+          }
+          return true; // Send to all tenants for now
+        });
+
+        // Send notifications in batches
+        const batchSize = 10;
+        for (let i = 0; i < interestedTenants.length; i += batchSize) {
+          const batch = interestedTenants.slice(i, i + batchSize);
+          const userIds = batch.map((tenant) => tenant.accountId);
+
+          await notificationService.sendBulkNotification(
+            userIds,
+            "New Property Listed!",
+            `${listing.propertyName} - $${listing.price}/month in ${city}`,
+            {
+              type: "property",
+              propertyId: response.$id,
+              screen: "explore",
+              priceThreshold: listing.priceThreshold,
+              totalSlots: listing.totalSlots || 0,
+              availableSlots: listing.totalSlots || 0,
+            },
+          );
+
+          console.log(
+            `📱 Sent notifications to ${userIds.length} tenants in batch ${i / batchSize + 1}`,
+          );
+        }
 
         console.log(
-          `📱 Sent notifications to ${userIds.length} tenants in batch ${i / batchSize + 1}`,
+          `✅ Push notifications sent to ${interestedTenants.length} tenants`,
         );
+      } catch (pushError) {
+        console.error(
+          "Failed to send push notifications for new listing:",
+          pushError,
+        );
+        // Don't throw - push notification failure shouldn't break the listing creation
       }
-
-      console.log(
-        `✅ Push notifications sent to ${interestedTenants.length} tenants`,
-      );
-    } catch (pushError) {
-      console.error(
-        "Failed to send push notifications for new listing:",
-        pushError,
-      );
-      // Don't throw - push notification failure shouldn't break the listing creation
+    } else {
+      console.log("⏸️ Property is not available, skipping push notifications");
     }
 
-    // Call the success callback if provided
     if (onSuccess) {
       onSuccess(response);
     }
@@ -623,6 +647,47 @@ export async function AddListing(
     throw error;
   }
 }
+
+// lib/appwrite.ts
+
+export const releaseTenantSlot = async (propertyId: string) => {
+  try {
+    const property = await databases.getDocument(
+      config.databaseId!,
+      config.propertiesCollectionId!,
+      propertyId,
+    );
+
+    const totalSlots = property.totalSlots || 0;
+    
+    // Only process if totalSlots > 0 (slot-based property)
+    if (totalSlots === 0) {
+      console.log("Property has no slot limit, skipping release");
+      return { availableSlots: 0, isAvailable: true };
+    }
+
+    const occupiedSlots = Math.max(0, (property.occupiedSlots || 0) - 1);
+    const availableSlots = Math.max(0, totalSlots - occupiedSlots);
+    const isAvailable = availableSlots > 0 || property.isAvailable; // Keep OR logic
+
+    await databases.updateDocument(
+      config.databaseId!,
+      config.propertiesCollectionId!,
+      propertyId,
+      {
+        occupiedSlots: occupiedSlots,
+        availableSlots: availableSlots,
+        isAvailable: isAvailable,
+      },
+    );
+
+    console.log(`✅ Slot released. Available slots: ${availableSlots}`);
+    return { availableSlots, isAvailable };
+  } catch (error) {
+    console.error("Error releasing tenant slot:", error);
+    throw error;
+  }
+};
 
 export const uploadFile = async (file: any) => {
   try {
@@ -826,6 +891,34 @@ export const getFavoritesByUser = async (favoriteDocumentId: string) => {
     throw error;
   }
 };
+
+// lib/appwrite.ts - Fix the logout function
+
+// lib/appwrite.ts
+
+export async function logout() {
+  try {
+    // First, check if there's an active session
+    try {
+      const session = await account.getSession("current");
+      if (session) {
+        await account.deleteSession("current");
+      }
+    } catch (sessionError) {
+      // No active session, that's fine
+      console.log("No active session found");
+    }
+    return { success: true };
+  } catch (error) {
+    console.error("Error logging out:", error);
+    // Even if there's an error, return success since the user is effectively logged out
+    return { success: true };
+  }
+}
+
+// ---------------- AVATAR ----------------
+
+// lib/appwrite.ts
 
 export async function updateUserAvatar(userId: string, avatarUrl: string) {
   try {
@@ -1376,6 +1469,11 @@ export async function getProperties({
           );
         }
 
+        property.isAccredited = isAccredited(
+          property.reviews,
+          property.$createdAt || property.createdAt
+        );
+
         return property;
       }),
     );
@@ -1386,6 +1484,8 @@ export async function getProperties({
     return [];
   }
 }
+
+
 export async function getLatestProperties() {
   try {
     const result = await databases.listDocuments(
@@ -3085,37 +3185,61 @@ export interface CustomPriceRange {
   max: number;
 }
 
-// Get properties with price filter
-export async function getPropertiesWithPriceFilter({
+// Get properties with price + advanced filters
+export async function getPropertiesWithFilters({
   filter,
   query,
   limit,
   priceRange,
   customPrice,
+  facilities,
+  bedrooms,
+  location,
 }: {
-  filter: string;
-  query: string;
+  filter?: string;
+  query?: string;
   limit?: number;
   priceRange?: PriceRange;
   customPrice?: CustomPriceRange;
+  facilities?: string[]; // e.g. ["wifi", "parking", "pool"]
+  bedrooms?: number; // exact match or min
+  location?: string; // city/area name
 }) {
   try {
     const buildQuery = [Query.orderDesc("$createdAt")];
 
-    // Add price filter
+    // 1. Price filter
     if (priceRange) {
       if (priceRange.max === 10000) {
         // For "$5000+" - only min price
         buildQuery.push(Query.greaterThanEqual("price", priceRange.min));
       } else {
-        // Normal range
         buildQuery.push(Query.between("price", priceRange.min, priceRange.max));
       }
     } else if (customPrice) {
       buildQuery.push(Query.between("price", customPrice.min, customPrice.max));
     }
 
-    // Add text search
+    // 2. Bedrooms filter - exact match
+    if (bedrooms && bedrooms > 0) {
+      buildQuery.push(Query.equal("bedrooms", bedrooms));
+    }
+
+    // 3. Facilities filter - array contains all
+    if (facilities && facilities.length > 0) {
+      // Appwrite: facilities field must be array type in collection
+      // This checks if document.facilities contains ALL of these values
+      facilities.forEach((facility) => {
+        buildQuery.push(Query.contains("facilities", facility));
+      });
+    }
+
+    // 4. Location filter - search address field
+    if (location && location.trim() !== "") {
+      buildQuery.push(Query.search("address", location.trim()));
+    }
+
+    // 5. Text search - runs last so other filters narrow it down first
     if (query && query.trim() !== "") {
       const searchTerm = query.trim();
       const isNumericSearch = /^\d+$/.test(searchTerm);
@@ -3126,10 +3250,6 @@ export async function getPropertiesWithPriceFilter({
           Query.or([
             Query.equal("price", priceNum),
             Query.between("price", priceNum - 50, priceNum + 50),
-          ]),
-        );
-        buildQuery.push(
-          Query.or([
             Query.search("propertyName", searchTerm),
             Query.search("facilities", searchTerm),
             Query.search("description", searchTerm),
@@ -3150,12 +3270,12 @@ export async function getPropertiesWithPriceFilter({
       }
     }
 
-    // Add type filter
+    // 6. Type filter
     if (filter && filter !== "All") {
       buildQuery.push(Query.equal("type", filter));
     }
 
-    // Add limit
+    // 7. Limit
     const fetchLimit = query && query.trim() !== "" ? 50 : limit || 10;
     buildQuery.push(Query.limit(fetchLimit));
 
@@ -3212,6 +3332,7 @@ export async function getPropertiesWithPriceFilter({
     return [];
   }
 }
+
 
 // Get price statistics for properties
 export async function getPriceStats() {
@@ -3543,3 +3664,104 @@ export async function getAvailableProperties({
     return [];
   }
 }
+
+
+// ✅ Get available slots for a property
+export const getAvailableSlots = async (propertyId: string): Promise<number> => {
+  try {
+    const property = await databases.getDocument(
+      config.databaseId!,
+      config.propertiesCollectionId!,
+      propertyId,
+    );
+    
+    const totalSlots = property.totalSlots || 0;
+    const occupiedSlots = property.occupiedSlots || 0;
+    return Math.max(0, totalSlots - occupiedSlots);
+  } catch (error) {
+    console.error("Error getting available slots:", error);
+    return 0;
+  }
+};
+
+// ✅ Update slots when a request is approved
+export const approveRequestAndUpdateSlots = async (
+  requestId: string,
+  propertyId: string,
+) => {
+  try {
+    // Get the property
+    const property = await databases.getDocument(
+      config.databaseId!,
+      config.propertiesCollectionId!,
+      propertyId,
+    );
+
+    const totalSlots = property.totalSlots || 0;
+    const occupiedSlots = (property.occupiedSlots || 0) + 1;
+    const availableSlots = Math.max(0, totalSlots - occupiedSlots);
+    const isAvailable = availableSlots > 0;
+
+    // Update the property with new slot counts
+    await databases.updateDocument(
+      config.databaseId!,
+      config.propertiesCollectionId!,
+      propertyId,
+      {
+        occupiedSlots: occupiedSlots,
+        availableSlots: availableSlots,
+        isAvailable: isAvailable, // Auto-pause when slots are full
+      },
+    );
+
+    // Update the request status to approved
+    await databases.updateDocument(
+      config.databaseId!,
+      config.requestsCollectionId!,
+      requestId,
+      { status: "approved" },
+    );
+
+    console.log(`✅ Request approved. Available slots: ${availableSlots}`);
+    return { availableSlots, isAvailable };
+  } catch (error) {
+    console.error("Error approving request and updating slots:", error);
+    throw error;
+  }
+};
+
+// ✅ Decrease occupied slots (e.g., when a tenant leaves)
+export const decreaseOccupiedSlots = async (
+  propertyId: string,
+  amount: number = 1,
+) => {
+  try {
+    const property = await databases.getDocument(
+      config.databaseId!,
+      config.propertiesCollectionId!,
+      propertyId,
+    );
+
+    const occupiedSlots = Math.max(0, (property.occupiedSlots || 0) - amount);
+    const totalSlots = property.totalSlots || 0;
+    const availableSlots = Math.max(0, totalSlots - occupiedSlots);
+    const isAvailable = availableSlots > 0;
+
+    await databases.updateDocument(
+      config.databaseId!,
+      config.propertiesCollectionId!,
+      propertyId,
+      {
+        occupiedSlots: occupiedSlots,
+        availableSlots: availableSlots,
+        isAvailable: isAvailable,
+      },
+    );
+
+    console.log(`✅ Slots decreased. Available slots: ${availableSlots}`);
+    return { availableSlots, isAvailable };
+  } catch (error) {
+    console.error("Error decreasing occupied slots:", error);
+    throw error;
+  }
+};

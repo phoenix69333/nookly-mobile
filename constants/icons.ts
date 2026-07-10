@@ -15,7 +15,10 @@ import chat from "@/assets/icons/chat.png";
 import check from "@/assets/icons/check.png";
 import clock from "@/assets/icons/clock.png";
 import close from "@/assets/icons/close.png";
+import owner from "@/assets/icons/copyright.png";
 
+import apartment from "@/assets/icons/apartment.png";
+import cottage from "@/assets/icons/cottage.png";
 import cutlery from "@/assets/icons/cutlery.png";
 import dashboard from "@/assets/icons/dashboard.png";
 import deal from "@/assets/icons/deal.png";
@@ -25,6 +28,7 @@ import dog from "@/assets/icons/dog.png";
 import download from "@/assets/icons/downloading.png";
 import downTrend from "@/assets/icons/downtrend.png";
 import dumbell from "@/assets/icons/dumbell.png";
+import duplex from "@/assets/icons/duplex.png";
 import edit from "@/assets/icons/edit.png";
 import eyeHide from "@/assets/icons/eyeHide.png";
 import filter from "@/assets/icons/filter.png";
@@ -37,6 +41,7 @@ import home from "@/assets/icons/home.png";
 import house from "@/assets/icons/house.png";
 import inbox from "@/assets/icons/inbox.png";
 import info from "@/assets/icons/info.png";
+import land from "@/assets/icons/land.png";
 import landlord from "@/assets/icons/landlord.png";
 import language from "@/assets/icons/language.png";
 import laundry from "@/assets/icons/laundry.png";
@@ -45,12 +50,15 @@ import linkedin from "@/assets/icons/linkedin.png";
 import location from "@/assets/icons/location.png";
 import lock from "@/assets/icons/lock.png";
 import logout from "@/assets/icons/logout.png";
+import luxury from "@/assets/icons/luxury.png";
 import mail from "@/assets/icons/mail.png";
+import other from "@/assets/icons/other.png";
 import painted from "@/assets/icons/paint.png";
 import people from "@/assets/icons/people.png";
 import person from "@/assets/icons/person.png";
 import phone from "@/assets/icons/phone.png";
 import refresh from "@/assets/icons/refresh.png";
+import request from "@/assets/icons/request.png";
 import rightArrow from "@/assets/icons/right-arrow.png";
 import run from "@/assets/icons/run.png";
 import search from "@/assets/icons/search.png";
@@ -60,19 +68,12 @@ import shield from "@/assets/icons/shield.png";
 import solar from "@/assets/icons/solar.png";
 import star from "@/assets/icons/star.png";
 import student from "@/assets/icons/student.png";
+import boarding from "@/assets/icons/students.png";
+import studio from "@/assets/icons/studio.png";
 import sun from "@/assets/icons/sun.png";
 import swim from "@/assets/icons/swim.png";
 import borehole from "@/assets/icons/tank.png";
-import apartment from "@/assets/icons/apartment.png";
-import cottage from "@/assets/icons/cottage.png";
-import duplex from "@/assets/icons/duplex.png";
-import luxury from "@/assets/icons/luxury.png";
-import studio from "@/assets/icons/studio.png";
-import land from "@/assets/icons/land.png";
 import workplace from "@/assets/icons/workplace.png";
-import other from "@/assets/icons/other.png";
-import boarding from "@/assets/icons/students.png";
-import request from "@/assets/icons/request.png";
 
 import tenant from "@/assets/icons/tenant.png";
 import tiled from "@/assets/icons/tiles.png";
@@ -82,6 +83,7 @@ import wallet from "@/assets/icons/wallet.png";
 import wifi from "@/assets/icons/wifi.png";
 
 export default {
+  owner,
   apartment,
   boarding,
   cottage,

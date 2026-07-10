@@ -1,8 +1,10 @@
 // screens/Profile.tsx
 import {
+  clearSavedAvatar,
   getSavedAvatar,
-  saveSelectedAvatar
+  saveSelectedAvatar,
 } from "@/utils/avatarStorage";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -16,7 +18,6 @@ import {
   useColorScheme,
   View,
 } from "react-native";
-
 
 import { Query } from "react-native-appwrite";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -219,13 +220,42 @@ const LandLordProfile = () => {
   };
 
   const handleLogout = async () => {
-    const result = await logout();
-    if (result) {
-      Alert.alert("Success", "Logged out successfully");
-      router.replace("/sign-in");
-    } else {
-      Alert.alert("Error", "Failed to logout");
-    }
+    Alert.alert("Logout", "Are you sure you want to logout?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Logout",
+        style: "destructive",
+        onPress: async () => {
+          setLogoutLoading(true);
+          try {
+            // Clear local avatar storage
+            await clearSavedAvatar();
+
+            // Clear local storage data
+            await AsyncStorage.multiRemove([
+              "user_applications",
+              "user_viewed_properties",
+              "user_likes_given",
+              "user_reviews",
+            ]);
+
+            // Use the logout function from appwrite
+            const result = await logout();
+
+            if (result.success) {
+              router.replace("/sign-in");
+            } else {
+              Alert.alert("Error", result.error || "Failed to logout");
+            }
+          } catch (error) {
+            console.error("Logout error:", error);
+            Alert.alert("Error", "Failed to logout. Please try again.");
+          } finally {
+            setLogoutLoading(false);
+          }
+        },
+      },
+    ]);
   };
 
   const profileOptions = [

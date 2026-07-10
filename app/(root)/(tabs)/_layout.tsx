@@ -150,6 +150,16 @@ const TabsLayout = () => {
       />
 
       <Tabs.Screen
+        name="landlords"
+        options={{
+          href: null,
+          title: "landlords",
+          headerShown: false,
+          tabBarStyle: { display: "none" },
+        }}
+      />
+
+      <Tabs.Screen
         name="detailsEdit"
         options={{
           href: null,

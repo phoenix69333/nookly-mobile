@@ -208,21 +208,24 @@ export default function RootLayout() {
   }, []);
 
   // Remove push token on logout (listen for user logout)
+  const previousAccountIdRef = useRef<string | null>(null);
   useEffect(() => {
-    const removeTokenOnLogout = async () => {
-      if (!user?.accountId) return;
-
-      // This will run when user becomes null (logged out)
+    const removeTokenOnLogout = async (accountId: string) => {
       const token = notificationService.getExpoPushToken();
       if (token) {
-        await notificationService.deactivatePushToken(user.accountId, token);
+        await notificationService.deactivatePushToken(accountId, token);
         console.log("🔴 Push token deactivated on logout");
       }
     };
 
-    // If user was logged out, remove token
-    if (!user && user === null) {
-      removeTokenOnLogout();
+    if (user?.accountId) {
+      // Remember the logged-in account so we can clean up after logout
+      previousAccountIdRef.current = user.accountId;
+    } else if (!user && previousAccountIdRef.current) {
+      // User transitioned from logged-in -> logged-out
+      const accountId = previousAccountIdRef.current;
+      previousAccountIdRef.current = null;
+      removeTokenOnLogout(accountId);
     }
   }, [user]);
 

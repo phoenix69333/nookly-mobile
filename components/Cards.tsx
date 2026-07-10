@@ -1,4 +1,7 @@
+// components/Cards.tsx
+import { AccreditedBadge } from "@/components/AccreditedBadge";
 import icons from "@/constants/icons";
+import { isAccredited } from "@/lib/accreditation";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Image,
@@ -27,6 +30,9 @@ export interface PropertyDocument extends Models.Document {
   image1?: string;
   image2?: string;
   image3?: string;
+  reviews?: string;
+
+  createdAt?: string;
 }
 
 interface Props {
@@ -44,6 +50,12 @@ export const FeaturedCard = ({ item, onPress }: Props) => {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? "light"];
 
+  // ✅ Check if property is accredited
+  const accredited = isAccredited(
+    item.reviews,
+    item.$createdAt || item.createdAt
+  );
+
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -59,13 +71,22 @@ export const FeaturedCard = ({ item, onPress }: Props) => {
         className="absolute bottom-0 left-0 right-0 h-40 rounded-b-2xl"
       />
 
-      {/* Rating badge */}
-      <View className="flex flex-row items-center bg-white/90 px-3 py-1.5 rounded-full absolute top-5 right-5 z-10">
-        <Image source={icons.star} className="size-3.5" />
-        <Text className="text-xs font-rubik-bold text-primary-300 ml-1">
-          {rating.toFixed()}
-        </Text>
-      </View>
+      {/* ✅ Accredited Badge - Top Right corner */}
+      {accredited && (
+        <View className="absolute top-5 right-5 z-20">
+          <AccreditedBadge size="small" />
+        </View>
+      )}
+
+      {/* Rating badge - Top Right (only if not accredited, or below badge) */}
+      {!accredited && (
+        <View className="flex flex-row items-center bg-white/90 px-3 py-1.5 rounded-full absolute top-5 right-5 z-10">
+          <Image source={icons.star} className="size-3.5" />
+          <Text className="text-xs font-rubik-bold text-primary-300 ml-1">
+            {rating.toFixed()}
+          </Text>
+        </View>
+      )}
 
       {/* Views badge - top left */}
       {views > 0 && (
@@ -137,6 +158,12 @@ export const Card = ({ item, onPress }: Props) => {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? "light"];
 
+  // ✅ Check if property is accredited
+  const accredited = isAccredited(
+    item.reviews,
+    item.$createdAt || item.createdAt
+  );
+
   return (
     <TouchableOpacity
       className="flex-1 w-full mt-4 px-3 py-4 rounded-lg shadow-lg shadow-black-100/70 relative"
@@ -161,13 +188,20 @@ export const Card = ({ item, onPress }: Props) => {
           </View>
         )}
 
-        {/* Rating Badge - Top Right */}
-        <View className="flex flex-row items-center bg-white/90 px-3 py-1.5 rounded-full absolute top-2 right-2 z-10">
-          <Image source={icons.star} className="size-3.5" />
-          <Text className="text-xs font-rubik-bold text-primary-300 ml-1">
-            {rating.toFixed()}
-          </Text>
-        </View>
+        {/* ✅ Accredited Badge - Top Right (replaces rating badge) */}
+        {accredited ? (
+          <View className="absolute top-2 right-2 z-10">
+            <AccreditedBadge size="small" />
+          </View>
+        ) : (
+          /* Rating Badge - Top Right (only if not accredited) */
+          <View className="flex flex-row items-center bg-white/90 px-3 py-1.5 rounded-full absolute top-2 right-2 z-10">
+            <Image source={icons.star} className="size-3.5" />
+            <Text className="text-xs font-rubik-bold text-primary-300 ml-1">
+              {rating.toFixed()}
+            </Text>
+          </View>
+        )}
 
         {/* Property Type Badge - Bottom Center */}
         <View className="absolute bottom-0 left-0 right-0 items-center pb-2">
@@ -180,14 +214,25 @@ export const Card = ({ item, onPress }: Props) => {
       </View>
 
       <View className="flex flex-col mt-2">
-        {/* Title */}
-        <Text
-          className="text-base font-rubik-bold mb-1"
-          style={{ color: theme.title }}
-          numberOfLines={1}
-        >
-          {title}
-        </Text>
+        {/* Title with accreditation indicator */}
+        <View className="flex-row items-center justify-between">
+          <Text
+            className="text-base font-rubik-bold mb-1 flex-1"
+            style={{ color: theme.title }}
+            numberOfLines={1}
+          >
+            {title}
+          </Text>
+          {accredited && (
+            <View className="ml-2 flex-shrink-0">
+              <View className="bg-green-500 px-1.5 py-0.5 rounded-full">
+                <Text className="text-white text-[8px] font-rubik-bold">
+                  ✓ Verified
+                </Text>
+              </View>
+            </View>
+          )}
+        </View>
 
         {/* Address */}
         <Text

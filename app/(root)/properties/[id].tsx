@@ -1,7 +1,9 @@
 // app/properties/[id].tsx
+import ConfirmationModal from "@/components/ConfirmationModal";
+import ContactModal from "@/components/ContactModal";
 import ErrorModal from "@/components/ErrorModal";
 import OperationSuccesfull from "@/components/OperationSuccesfull";
-import ConfirmationModal from "@/components/ConfirmationModal";
+import PropertyMapCard from "@/components/PropertyMapCard";
 import { RequestData, RequestModal } from "@/components/RequestModal";
 import ReviewSuccessModal from "@/components/ReviewSuccessModal";
 import { facilities, getAvatarSource } from "@/constants/data";
@@ -18,10 +20,13 @@ import {
   requestProperty,
   toggleLike,
 } from "@/lib/appwrite";
+import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Query } from "react-native-appwrite";
 
 import { Colors } from "@/constants/Colors";
+import { getAccreditationDetails, isAccredited } from "@/lib/accreditation";
+import { downloadMediaToDevice } from "@/lib/downloadMedia";
 import {
   addToFavorites,
   isFavorite,
@@ -32,7 +37,7 @@ import useAuthStore from "@/store/auth.store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams, useNavigation } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   BackHandler,
@@ -47,19 +52,17 @@ import {
   TextInput,
   TouchableOpacity,
   useColorScheme,
-  View,
+  View
 } from "react-native";
-import {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from "react-native-reanimated";
+import { useSharedValue, withSpring } from "react-native-reanimated";
 
 // ============================================================================
 // TYPES
 // ============================================================================
 export interface PropertyData {
   $id: string;
+  $createdAt?: string;
+  createdAt?: string;
   propertyName?: string;
   type: string;
   description: string;
@@ -85,9 +88,17 @@ export interface PropertyData {
   creatorEmail?: string;
   creatorPhone?: string;
   creatorAvatar?: string;
-  reviews?: string; // This is a JSON string in the database
+  reviews?: string;
   isAvailable?: boolean;
   creatorId?: string;
+  isAccredited?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  accreditationDetails?: {
+    positiveReviewCount: number;
+    totalReviews: number;
+    daysOnPlatform: number;
+  };
 }
 
 interface Review {
@@ -115,6 +126,17 @@ const Property = () => {
   const scale = useSharedValue(1);
   const viewRecorded = useRef(false);
 
+  // ============================================================================
+  // CONTACT MODAL STATE
+  // ============================================================================
+  const [contactModalVisible, setContactModalVisible] = useState(false);
+  const [landlordContact, setLandlordContact] = useState<{
+    name: string;
+    email: string;
+    phone?: string;
+    avatar?: string;
+  } | null>(null);
+
   // Fetch property data
   const {
     data: property,
@@ -128,6 +150,19 @@ const Property = () => {
     loading: boolean;
     refetch: (params?: any) => Promise<void>;
   };
+
+  const checkAccreditation = (property: PropertyData | null) => {
+    if (!property) return false;
+
+    const createdAt = property.$createdAt || property.createdAt || "";
+    const reviews = property.reviews || null;
+
+    return isAccredited(reviews, createdAt);
+  };
+
+  const isPropertyAccredited = useMemo(() => {
+    return checkAccreditation(property);
+  }, [property]);
 
   // ============================================================================
   // REVIEWS STATE
@@ -179,8 +214,11 @@ const Property = () => {
   const [loadingAgent, setLoadingAgent] = useState(false);
   const [confirmationModalVisible, setConfirmationModalVisible] =
     useState(false);
-  const [propertyToDelete, setPropertyToDelete] = useState<string | null>(null);
-  const [operationSuccessVisible, setOperationSuccessVisible] = useState(false);
+  const [propertyToDelete, setPropertyToDelete] = useState<string | null>(
+    null,
+  );
+  const [operationSuccessVisible, setOperationSuccessVisible] =
+    useState(false);
   const [operationSuccessConfig, setOperationSuccessConfig] = useState({
     title: "",
     message: "",
@@ -190,19 +228,99 @@ const Property = () => {
     message: "",
   });
 
+  // ============================================================================
+  // DOWNLOAD STATE
+  // ============================================================================
+  const [downloadingMedia, setDownloadingMedia] = useState<string | null>(
+    null,
+  );
+
+  // ============================================================================
+  // CONTACT LANDLORD FUNCTION
+  // ============================================================================
+  const handleContactLandlord = () => {
+    if (!property) return;
+
+    // Get landlord info from property
+    const landlord = property.agent || {
+      name: property.creatorName || "Property Owner",
+      email: property.creatorEmail || "Not available",
+      phone: property.creatorPhone || null,
+      avatar: property.creatorAvatar || null,
+    };
+
+    setLandlordContact({
+      name: landlord.name,
+      email: landlord.email,
+      phone: landlord.phone || undefined,
+      avatar: landlord.avatar || undefined,
+    });
+    setContactModalVisible(true);
+  };
+
+  const handleDownloadImage = async (uri: string, index: number) => {
+    if (downloadingMedia) return;
+    setDownloadingMedia(uri);
+    try {
+      const filename = `${property?.propertyName || "property"}_image_${index + 1}.jpg`.replace(
+        /\s+/g,
+        "_",
+      );
+      await downloadMediaToDevice(uri, filename);
+      setOperationSuccessConfig({
+        title: "Saved!",
+        message: "Image saved to your gallery",
+      });
+      setOperationSuccessVisible(true);
+    } catch (error: any) {
+      console.error("Error downloading image:", error);
+      setErrorModalConfig({
+        title: "Download Failed",
+        message: error?.message || "Failed to save image. Please try again.",
+      });
+      setErrorModalVisible(true);
+    } finally {
+      setDownloadingMedia(null);
+    }
+  };
+
+  const handleDownloadVideo = async (uri: string, index: number) => {
+    if (downloadingMedia) return;
+    setDownloadingMedia(uri);
+    try {
+      const filename = `${property?.propertyName || "property"}_video_${index + 1}.mp4`.replace(
+        /\s+/g,
+        "_",
+      );
+      await downloadMediaToDevice(uri, filename);
+      setOperationSuccessConfig({
+        title: "Saved!",
+        message: "Video saved to your gallery",
+      });
+      setOperationSuccessVisible(true);
+    } catch (error: any) {
+      console.error("Error downloading video:", error);
+      setErrorModalConfig({
+        title: "Download Failed",
+        message: error?.message || "Failed to save video. Please try again.",
+      });
+      setErrorModalVisible(true);
+    } finally {
+      setDownloadingMedia(null);
+    }
+  };
+
   // Check if current user owns this property
   const isLandlordOwner =
     user?.userMode === "landlord" && property?.creatorId === user?.accountId;
+
   useEffect(() => {
     const backAction = () => {
-      // Customize what happens when back button is pressed
-      // You can prevent navigation or show an alert
       console.log("Back button pressed");
-
       router.replace(
         user?.userMode === "landlord" ? "/landHome" : "/tenantHome",
       );
-      return true; // Prevent default
+      return true;
     };
 
     const backHandler = BackHandler.addEventListener(
@@ -212,6 +330,7 @@ const Property = () => {
 
     return () => backHandler.remove();
   }, [user]);
+
   useEffect(() => {
     const checkFavorite = async () => {
       if (property) {
@@ -269,6 +388,7 @@ const Property = () => {
   const handleEditChange = (field: string, value: string) => {
     setEditForm({ ...editForm, [field]: value });
   };
+
   const [hasRequested, setHasRequested] = useState(false);
   const [requestStatus, setRequestStatus] = useState<
     "none" | "pending" | "accepted" | "rejected"
@@ -279,7 +399,6 @@ const Property = () => {
       if (!property || !user?.accountId) return;
 
       try {
-        // Check if user has already requested this property
         const requestsResult = await databases.listDocuments(
           config.databaseId!,
           config.requestsCollectionId!,
@@ -293,7 +412,7 @@ const Property = () => {
         if (requestsResult.documents.length > 0) {
           const status = requestsResult.documents[0].status;
           setRequestStatus(status);
-          setHasRequested(status !== "rejected"); // Only disable if not rejected
+          setHasRequested(status !== "rejected");
         }
       } catch (error) {
         console.error("Error checking request status:", error);
@@ -303,7 +422,6 @@ const Property = () => {
     checkRequestStatus();
   }, [property, user]);
 
-  // Check if user has already requested this property when it loads
   useEffect(() => {
     const checkIfRequested = async () => {
       if (!property || !user?.accountId) return;
@@ -325,6 +443,7 @@ const Property = () => {
 
     checkIfRequested();
   }, [property, user]);
+
   const toggleAvailability = () => {
     setEditForm({ ...editForm, isAvailable: !editForm.isAvailable });
   };
@@ -467,9 +586,6 @@ const Property = () => {
         });
         setOperationSuccessVisible(true);
       }
-      console.log("FULL PROPERTY:", property);
-      console.log("Creator Name:", property.creatorName);
-      console.log("Creator Email:", property.creatorEmail);
     } catch (error) {
       console.error("Error toggling favorite:", error);
       setErrorModalConfig({
@@ -486,12 +602,9 @@ const Property = () => {
   useEffect(() => {
     if (property?.reviews) {
       try {
-        // Parse the JSON string from database into an array
         const parsedReviews = JSON.parse(property.reviews);
         setReviews(parsedReviews);
-        console.log("✅ Reviews loaded:", parsedReviews.length);
       } catch (e) {
-        console.log("No reviews or error parsing:", e);
         setReviews([]);
       }
     } else {
@@ -506,7 +619,10 @@ const Property = () => {
     const checkLikeStatus = async () => {
       if (property && user?.accountId) {
         try {
-          const userLiked = await checkUserLiked(property.$id, user.accountId);
+          const userLiked = await checkUserLiked(
+            property.$id,
+            user.accountId,
+          );
           const count = await getLikeCount(property.$id);
           setLiked(userLiked);
           setLikeCount(count);
@@ -523,10 +639,10 @@ const Property = () => {
     if (property && user?.userMode === "tenant" && !viewRecorded.current) {
       viewRecorded.current = true;
 
-      // Increment DB views with 24-hour cooldown
-      incrementPropertyViews(property.$id, user.accountId).catch(console.error);
+      incrementPropertyViews(property.$id, user.accountId).catch(
+        console.error,
+      );
 
-      // Record local view for stats (unique properties - one time only)
       const recordLocalView = async () => {
         const key = `user_viewed_properties_${user.accountId}`;
         const stored = await AsyncStorage.getItem(key);
@@ -534,13 +650,6 @@ const Property = () => {
         if (!viewed.includes(property.$id)) {
           viewed.push(property.$id);
           await AsyncStorage.setItem(key, JSON.stringify(viewed));
-          console.log(
-            `✅ Property ${property.$id} added to user's unique viewed list`,
-          );
-        } else {
-          console.log(
-            `📌 Property ${property.$id} already in unique viewed list`,
-          );
         }
       };
       recordLocalView().catch(console.error);
@@ -573,8 +682,6 @@ const Property = () => {
     fetchAgent();
   }, [property?.agent]);
 
-
-  // Inside the Property component
   const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -595,7 +702,6 @@ const Property = () => {
         await incrementPropertyViews(property.$id);
         await AsyncStorage.setItem(storageKey, now.toString());
 
-        // Update the tenant's unique viewed properties list
         const statsKey = `user_viewed_properties_${user.accountId}`;
         const stored = await AsyncStorage.getItem(statsKey);
         let viewed = stored ? JSON.parse(stored) : [];
@@ -603,16 +709,9 @@ const Property = () => {
           viewed.push(property.$id);
           await AsyncStorage.setItem(statsKey, JSON.stringify(viewed));
         }
-
-        console.log(`✅ View counted for ${property.propertyName}`);
-      } else {
-        console.log(
-          `⏭️ View not counted (within 24h) for ${property.propertyName}`,
-        );
       }
     };
 
-    // Start a 10-second timer
     viewTimer.current = setTimeout(() => {
       recordView();
     }, 10000);
@@ -625,7 +724,8 @@ const Property = () => {
 
   const [reviewSuccessVisible, setReviewSuccessVisible] = useState(false);
   const handleAddReview = async () => {
-    if (!property || !reviewText.trim() || user?.userMode !== "tenant") return;
+    if (!property || !reviewText.trim() || user?.userMode !== "tenant")
+      return;
 
     try {
       await addReview(property.$id, reviewText, rating);
@@ -654,7 +754,7 @@ const Property = () => {
   };
 
   // ============================================================================
-  // HANDLE LIKE/UNLIKE - ONLY LIKES, DOESN'T AFFECT FAVORITES
+  // HANDLE LIKE/UNLIKE
   // ============================================================================
   const handleLike = async () => {
     if (!property || !user?.accountId || user?.userMode !== "tenant") return;
@@ -765,7 +865,6 @@ const Property = () => {
     const unsubscribe = navigation.addListener("beforeRemove", (e) => {
       if (!navigation.canGoBack()) {
         e.preventDefault();
-
         router.replace(
           user?.userMode === "landlord" ? "/landHome" : "/tenantHome",
         );
@@ -780,9 +879,13 @@ const Property = () => {
     if (images.length === 0) return;
 
     if (direction === "prev") {
-      setCurrentImageIndex((prev) => (prev > 0 ? prev - 1 : images.length - 1));
+      setCurrentImageIndex((prev) =>
+        prev > 0 ? prev - 1 : images.length - 1,
+      );
     } else {
-      setCurrentImageIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0));
+      setCurrentImageIndex((prev) =>
+        prev < images.length - 1 ? prev + 1 : 0,
+      );
     }
   };
 
@@ -802,7 +905,6 @@ const Property = () => {
           backgroundColor: theme.navBackground,
         }}
       >
-        {/* Main Image */}
         {mainImage ? (
           <Image
             source={{ uri: mainImage }}
@@ -819,7 +921,6 @@ const Property = () => {
           </View>
         )}
 
-        {/* Views Count Badge - Top Left */}
         {property?.views !== undefined && property.views > 0 && (
           <View
             className="absolute top-12 right-4 z-50 flex-row items-center bg-black/60 px-3 py-1.5 rounded-full"
@@ -842,7 +943,31 @@ const Property = () => {
           </View>
         )}
 
-        {/* Dark Gradient Overlay at Top for Better Button Visibility */}
+        {mainImage && (
+          <TouchableOpacity
+            onPress={() => handleDownloadImage(mainImage, currentImageIndex)}
+            disabled={downloadingMedia === mainImage}
+            className="absolute top-24 right-4 z-50 bg-black/60 rounded-full p-2.5"
+            style={{
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 1 },
+              shadowOpacity: 0.25,
+              shadowRadius: 2,
+              elevation: 2,
+            }}
+          >
+            {downloadingMedia === mainImage ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Image
+                source={icons.download}
+                className="w-5 h-5"
+                style={{ tintColor: "#FFFFFF" }}
+              />
+            )}
+          </TouchableOpacity>
+        )}
+
         <LinearGradient
           colors={["rgba(0,0,0,0.7)", "rgba(0,0,0,0.7)", "transparent"]}
           start={{ x: 0, y: 0 }}
@@ -857,7 +982,6 @@ const Property = () => {
           }}
         />
 
-        {/* Top bar with Back button */}
         <View
           className="z-50 absolute inset-x-7"
           style={{ top: Platform.OS === "ios" ? 70 : 20 }}
@@ -871,7 +995,7 @@ const Property = () => {
               }}
               className="flex flex-row rounded-full mt-5 px-5 py-2 items-center justify-center"
               style={{
-                backgroundColor: "#FF4B33", // Orange-500
+                backgroundColor: "#FF4B33",
                 shadowColor: "#000",
                 shadowOffset: { width: 0, height: 2 },
                 shadowOpacity: 0.25,
@@ -879,15 +1003,15 @@ const Property = () => {
                 elevation: 3,
               }}
             >
-              <Text className="text-white font-rubik-bold text-base">Back</Text>
+              <Text className="text-white font-rubik-bold text-base">
+                Back
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Image Gallery Controls */}
         {propertyImages.length > 1 && (
           <>
-            {/* Navigation Arrows - Middle Left & Right */}
             <TouchableOpacity
               onPress={() => handleImageNavigation("prev")}
               className="absolute left-3 bg-black/60 rounded-full p-2 z-50"
@@ -912,7 +1036,6 @@ const Property = () => {
               />
             </TouchableOpacity>
 
-            {/* Image Dots - Bottom Center */}
             <View className="absolute bottom-4 flex-row justify-center w-full z-50">
               {propertyImages.map((_, index) => (
                 <TouchableOpacity
@@ -938,8 +1061,12 @@ const Property = () => {
     const propertyImages = getPropertyImages();
     const facilityList = normalizeFacilities();
     const avgRating = calculateAverageRating();
+    const accreditationDetails = getAccreditationDetails(
+      property.reviews,
+      property.$createdAt || property.createdAt,
+    );
+    const isAccredited = checkAccreditation(property);
 
-    // Get creator info (landlord/agent)
     const creator = property.agent || {
       name: property.creatorName || "Property Owner",
       email: property.creatorEmail || "Not available",
@@ -949,19 +1076,27 @@ const Property = () => {
 
     return (
       <>
-        {/* Property details */}
         <View
           className="px-5 mt-7 gap-2"
           style={{ backgroundColor: theme.navBackground }}
         >
-          <Text
-            className="text-2xl font-rubik-extrabold"
-            style={{ color: theme.title }}
-          >
-            {property.propertyName || "Property"}
-          </Text>
+          <View className="flex-row items-center justify-between">
+            <Text
+              className="text-2xl font-rubik-extrabold flex-1"
+              style={{ color: theme.title }}
+            >
+              {property.propertyName || "Property"}
+            </Text>
+            {isAccredited && (
+              <View className="bg-green-500 px-3 py-1 rounded-full flex-row items-center ml-2">
+                <Ionicons name="checkmark-circle" size={14} color="white" />
+                <Text className="text-white text-[10px] font-rubik-bold ml-1">
+                  Verified
+                </Text>
+              </View>
+            )}
+          </View>
 
-          {/* Type + Rating */}
           <View className="flex flex-row items-center justify-between gap-3">
             <View className="flex flex-row items-center gap-3">
               <View className="flex flex-row items-center px-4 py-2 bg-primary-100 rounded-full">
@@ -975,7 +1110,6 @@ const Property = () => {
               </Text>
             </View>
 
-            {/* REQUEST BUTTON */}
             <TouchableOpacity
               onPress={() => setShowRequestModal(true)}
               disabled={
@@ -1007,7 +1141,6 @@ const Property = () => {
             </TouchableOpacity>
           </View>
 
-          {/* Beds, Baths, Area */}
           <View className="flex flex-row items-center mt-5">
             <View className="flex flex-row items-center justify-center bg-primary-100 rounded-full size-10">
               <Image source={icons.bed} className="size-4" />
@@ -1041,7 +1174,7 @@ const Property = () => {
           </View>
 
           {/* ======================================== */}
-          {/* CREATOR/LANDLORD INFO SECTION */}
+          {/* CREATOR/LANDLORD INFO SECTION WITH CONTACT BUTTON */}
           {/* ======================================== */}
           <View className="mt-6">
             <Text
@@ -1061,7 +1194,6 @@ const Property = () => {
                 borderColor: theme.muted + "30",
               }}
             >
-              {/* Avatar */}
               <Image
                 source={
                   creator.avatar
@@ -1077,7 +1209,6 @@ const Property = () => {
                 }}
               />
 
-              {/* Info */}
               <View className="flex-1">
                 <Text
                   className="text-lg font-rubik-bold"
@@ -1115,6 +1246,31 @@ const Property = () => {
                     </Text>
                   </View>
                 )}
+
+                {/* ✅ CONTACT LANDLORD BUTTON - Only for tenants */}
+                {user?.userMode === "tenant" && (
+                  <TouchableOpacity
+                    onPress={handleContactLandlord}
+                    className="mt-3 py-2 px-4 rounded-full flex-row items-center justify-center self-start"
+                    style={{
+                      backgroundColor: theme.primary[100],
+                      borderWidth: 1,
+                      borderColor: theme.primary[300],
+                    }}
+                  >
+                    <Ionicons
+                      name="chatbubble-outline"
+                      size={16}
+                      color={theme.primary[300]}
+                    />
+                    <Text
+                      className="ml-2 text-sm font-rubik-bold"
+                      style={{ color: theme.primary[300] }}
+                    >
+                      Contact Landlord
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           </View>
@@ -1146,7 +1302,6 @@ const Property = () => {
 
             {facilityList.length > 0 ? (
               <View className="mt-2">
-                {/* Grid Container - 3 items per row */}
                 <View className="flex-row flex-wrap -mx-1">
                   {facilityList.map((item, index) => {
                     const facility = facilities.find(
@@ -1242,6 +1397,21 @@ const Property = () => {
                     {index === currentImageIndex && (
                       <View className="absolute inset-0 bg-primary-300/30 rounded-xl border-2 border-primary-300" />
                     )}
+                    <TouchableOpacity
+                      onPress={() => handleDownloadImage(item, index)}
+                      disabled={downloadingMedia === item}
+                      className="absolute top-1 right-1 bg-black/60 rounded-full p-1"
+                    >
+                      {downloadingMedia === item ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Image
+                          source={icons.download}
+                          className="w-3 h-3"
+                          style={{ tintColor: "#FFFFFF" }}
+                        />
+                      )}
+                    </TouchableOpacity>
                   </TouchableOpacity>
                 )}
               />
@@ -1265,11 +1435,16 @@ const Property = () => {
                 {property.address || "Address not available"}
               </Text>
             </View>
+
+            <PropertyMapCard
+              latitude={property.latitude}
+              longitude={property.longitude}
+              propertyName={property.propertyName}
+              address={property.address}
+            />
           </View>
 
-          {/* ======================================== */}
-          {/* REVIEWS SECTION */}
-          {/* ======================================== */}
+          {/* Reviews */}
           <View className="mt-7">
             <Text
               className="text-black-300 text-xl font-rubik-bold"
@@ -1355,7 +1530,7 @@ const Property = () => {
             )}
           </View>
 
-          {/* ======================================== */}
+          {/* Add Review */}
           <KeyboardAvoidingView
             behavior={Platform.OS === "ios" ? "padding" : "height"}
             keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
@@ -1422,7 +1597,6 @@ const Property = () => {
             </Text>
           </View>
 
-          {/* Edit Button for Landlord Owners */}
           {isLandlordOwner && (
             <TouchableOpacity
               onPress={openEditModal}
@@ -1507,9 +1681,7 @@ const Property = () => {
             </Text>
           </View>
 
-          {/* ======================================== */}
-          {/* REVIEWS SECTION - MATCHING TENANT VIEW WITHOUT COLLAPSE */}
-          {/* ======================================== */}
+          {/* Reviews */}
           <View className="mt-7">
             <Text
               className="text-black-300 text-xl font-rubik-bold mb-3"
@@ -1531,13 +1703,10 @@ const Property = () => {
                       borderColor: theme.muted + "30",
                     }}
                   >
-                    {/* Review Header - User Info */}
                     <View className="flex-row items-center mb-2">
                       <Image
                         source={
-                          rev.userAvatar
-                            ? { uri: rev.userAvatar }
-                            : icons.person
+                          rev.userAvatar ? { uri: rev.userAvatar } : icons.person
                         }
                         className="w-8 h-8 rounded-full mr-3"
                         style={{
@@ -1579,7 +1748,6 @@ const Property = () => {
                       </View>
                     </View>
 
-                    {/* Review Content */}
                     <View className="ml-2">
                       <Text
                         className="text-base leading-5"
@@ -1702,6 +1870,21 @@ const Property = () => {
                     {index === currentImageIndex && (
                       <View className="absolute inset-0 bg-primary-300/30 rounded-xl border-2 border-primary-300" />
                     )}
+                    <TouchableOpacity
+                      onPress={() => handleDownloadImage(item, index)}
+                      disabled={downloadingMedia === item}
+                      className="absolute top-1 right-1 bg-black/60 rounded-full p-1"
+                    >
+                      {downloadingMedia === item ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Image
+                          source={icons.download}
+                          className="w-3 h-3"
+                          style={{ tintColor: "#FFFFFF" }}
+                        />
+                      )}
+                    </TouchableOpacity>
                   </TouchableOpacity>
                 )}
               />
@@ -1724,9 +1907,15 @@ const Property = () => {
                 {property.address || "Address not available"}
               </Text>
             </View>
+
+            <PropertyMapCard
+              latitude={property.latitude}
+              longitude={property.longitude}
+              propertyName={property.propertyName}
+              address={property.address}
+            />
           </View>
 
-          {/* ✅ DELETE PROPERTY BUTTON - Only show if current user is the creator */}
           {isLandlordOwner && (
             <View className="mt-7 mb-10">
               <TouchableOpacity
@@ -1800,7 +1989,9 @@ const Property = () => {
               keyExtractor={(item) => item.title}
               numColumns={2}
               renderItem={({ item }) => {
-                const isSelected = editSelectedFacilities.includes(item.title);
+                const isSelected = editSelectedFacilities.includes(
+                  item.title,
+                );
                 return (
                   <TouchableOpacity
                     onPress={() => toggleEditFacility(item.title)}
@@ -1876,7 +2067,6 @@ const Property = () => {
             </View>
 
             <ScrollView className="p-6" showsVerticalScrollIndicator={false}>
-              {/* Property Name */}
               <View className="mb-4">
                 <Text
                   className="text-sm font-rubik-medium mb-1"
@@ -1900,7 +2090,6 @@ const Property = () => {
                 />
               </View>
 
-              {/* Property Type */}
               <View className="mb-4">
                 <Text
                   className="text-sm font-rubik-medium mb-1"
@@ -1922,7 +2111,6 @@ const Property = () => {
                 />
               </View>
 
-              {/* Address */}
               <View className="mb-4">
                 <Text
                   className="text-sm font-rubik-medium mb-1"
@@ -1944,7 +2132,6 @@ const Property = () => {
                 />
               </View>
 
-              {/* Price */}
               <View className="mb-4">
                 <Text
                   className="text-sm font-rubik-medium mb-1"
@@ -1977,7 +2164,6 @@ const Property = () => {
                 </View>
               </View>
 
-              {/* Bedrooms & Bathrooms */}
               <View className="flex-row gap-4 mb-4">
                 <View className="flex-1">
                   <Text
@@ -1988,7 +2174,9 @@ const Property = () => {
                   </Text>
                   <TextInput
                     value={editForm.bedrooms}
-                    onChangeText={(text) => handleEditChange("bedrooms", text)}
+                    onChangeText={(text) =>
+                      handleEditChange("bedrooms", text)
+                    }
                     keyboardType="numeric"
                     className="border px-4 py-3 rounded-lg"
                     style={{
@@ -2009,7 +2197,9 @@ const Property = () => {
                   </Text>
                   <TextInput
                     value={editForm.bathrooms}
-                    onChangeText={(text) => handleEditChange("bathrooms", text)}
+                    onChangeText={(text) =>
+                      handleEditChange("bathrooms", text)
+                    }
                     keyboardType="numeric"
                     className="border px-4 py-3 rounded-lg"
                     style={{
@@ -2023,7 +2213,6 @@ const Property = () => {
                 </View>
               </View>
 
-              {/* Area */}
               <View className="mb-4">
                 <Text
                   className="text-sm font-rubik-medium mb-1"
@@ -2046,7 +2235,6 @@ const Property = () => {
                 />
               </View>
 
-              {/* Facilities */}
               <View className="mb-4">
                 <Text
                   className="text-sm font-rubik-medium mb-1"
@@ -2096,7 +2284,6 @@ const Property = () => {
                 </TouchableOpacity>
               </View>
 
-              {/* Description */}
               <View className="mb-6">
                 <Text
                   className="text-sm font-rubik-medium mb-1"
@@ -2106,7 +2293,9 @@ const Property = () => {
                 </Text>
                 <TextInput
                   value={editForm.description}
-                  onChangeText={(text) => handleEditChange("description", text)}
+                  onChangeText={(text) =>
+                    handleEditChange("description", text)
+                  }
                   className="border px-4 py-3 rounded-lg h-24"
                   style={{
                     backgroundColor: theme.surface,
@@ -2121,7 +2310,6 @@ const Property = () => {
                 />
               </View>
 
-              {/* Availability Status */}
               <View className="mb-6">
                 <Text
                   className="text-sm font-rubik-medium mb-3"
@@ -2133,7 +2321,9 @@ const Property = () => {
                 <TouchableOpacity
                   onPress={toggleAvailability}
                   className={`flex-row items-center justify-between p-4 rounded-xl border ${
-                    editForm.isAvailable ? "border-green-300" : "border-red-300"
+                    editForm.isAvailable
+                      ? "border-green-300"
+                      : "border-red-300"
                   }`}
                   style={{
                     backgroundColor: editForm.isAvailable
@@ -2166,7 +2356,10 @@ const Property = () => {
                           ? "Available for Rent"
                           : "Not Available"}
                       </Text>
-                      <Text className="text-xs" style={{ color: theme.muted }}>
+                      <Text
+                        className="text-xs"
+                        style={{ color: theme.muted }}
+                      >
                         {editForm.isAvailable
                           ? "Property is visible to tenants"
                           : "Property is hidden from search"}
@@ -2188,7 +2381,6 @@ const Property = () => {
                 </TouchableOpacity>
               </View>
 
-              {/* Buttons */}
               <View className="flex-row gap-3 mb-10">
                 <TouchableOpacity
                   onPress={closeEditModal}
@@ -2270,7 +2462,9 @@ const Property = () => {
     <View className="flex-1" style={{ backgroundColor: theme.navBackground }}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? (isTenant ? 90 : 0) : 0}
+        keyboardVerticalOffset={
+          Platform.OS === "ios" ? (isTenant ? 90 : 0) : 0
+        }
         style={{ flex: 1 }}
       >
         <ScrollView
@@ -2285,7 +2479,6 @@ const Property = () => {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* BOTTOM BAR - ONLY FOR TENANTS */}
       {isTenant && (
         <View
           className="absolute bottom-10 w-full rounded-t-2xl border-t border-r border-l border-primary-200 p-4"
@@ -2370,14 +2563,12 @@ const Property = () => {
         onConfirm={confirmDeleteProperty}
         onCancel={() => setConfirmationModalVisible(false)}
       />
-
       <ErrorModal
         visible={errorModalVisible}
         onClose={() => setErrorModalVisible(false)}
         title="Oops!"
         message={errorMessage}
       />
-      {/* Request Modal */}
       <RequestModal
         visible={showRequestModal}
         onClose={() => setShowRequestModal(false)}
@@ -2385,6 +2576,16 @@ const Property = () => {
         propertyName={property?.propertyName || "this property"}
         currentPrice={property?.price || 0}
         isLoading={requestModalLoading}
+      />
+
+      {/* Contact Modal */}
+      <ContactModal
+        visible={contactModalVisible}
+        onClose={() => setContactModalVisible(false)}
+        name={landlordContact?.name || ""}
+        email={landlordContact?.email || ""}
+        phone={landlordContact?.phone}
+        avatar={landlordContact?.avatar}
       />
     </View>
   );

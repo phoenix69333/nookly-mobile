@@ -2,6 +2,7 @@
 import { Colors } from "@/constants/Colors";
 import { getAvatarSource } from "@/constants/data";
 
+import { LeaseDocumentModal } from "@/components/LeaseDocumentModal";
 import icons from "@/constants/icons";
 import {
   config,
@@ -31,7 +32,6 @@ import {
 } from "react-native";
 import { Query } from "react-native-appwrite";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { LeaseDocumentModal } from "@/components/LeaseDocumentModal";
 
 interface RentalRequest {
   $id: string;
@@ -52,7 +52,7 @@ interface RentalRequest {
   leaseDuration?: string;
   questions?: string[];
   property?: any;
-  rejectionReason?: string; // Added for rejection reason
+  rejectionReason?: string; 
   // Lease document fields
   leaseDocumentId?: string;
   leaseDocumentUrl?: string;
@@ -61,7 +61,7 @@ interface RentalRequest {
 }
 
 export default function LandlordRequests() {
-  const { user } = useAuthStore();
+  const { user} = useAuthStore();
   const [requests, setRequests] = useState<RentalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

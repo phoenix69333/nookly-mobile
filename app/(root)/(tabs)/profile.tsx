@@ -1,17 +1,16 @@
 // app/(root)/profile.tsx (Tenant Profile - Using Local Storage)
 import AvatarSuccessModal from "@/components/AvatarSuccessModal";
 import icons from "@/constants/icons";
-
 import {
   config,
   databases,
   getUserLikesGiven,
   getUserReviewsGiven,
-  logout,
   uploadImage,
 } from "@/lib/appwrite";
 import { getFavorites } from "@/lib/localFavorites";
 import useAuthStore from "@/store/auth.store";
+import { clearSavedAvatar } from "@/utils/avatarStorage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
@@ -188,14 +187,43 @@ const Profile = () => {
   // Logout
   // In your Profile screen
 
- const handleLogout = async () => {
-    const result = await logout();
-    if (result) {
-      Alert.alert("Success", "Logged out successfully");
-      router.replace("/sign-in");
-    } else {
-      Alert.alert("Error", "Failed to logout");
-    }
+  const handleLogout = async () => {
+    Alert.alert("Logout", "Are you sure you want to logout?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Logout",
+        style: "destructive",
+        onPress: async () => {
+          setLogoutLoading(true);
+          try {
+            // Clear local avatar storage
+            await clearSavedAvatar();
+
+            // Clear local storage data
+            await AsyncStorage.multiRemove([
+              "user_applications",
+              "user_viewed_properties",
+              "user_likes_given",
+              "user_reviews",
+            ]);
+
+            // Use the auth store's signOut method (not the separate logout function)
+            const result = await signOut();
+
+            if (result.success) {
+              router.replace("/sign-in");
+            } else {
+              Alert.alert("Error", result.error || "Failed to logout");
+            }
+          } catch (error) {
+            console.error("Logout error:", error);
+            Alert.alert("Error", "Failed to logout. Please try again.");
+          } finally {
+            setLogoutLoading(false);
+          }
+        },
+      },
+    ]);
   };
 
   // Profile options for tenant

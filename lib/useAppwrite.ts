@@ -18,6 +18,8 @@ interface UseAppwriteReturn<T, P> {
   refetch: (newParams: P) => Promise<void>;
 }
 
+
+
 // Simple cache storage
 const cache = new Map<string, { data: any; timestamp: number }>();
 const DEFAULT_TTL = 30000; // 30 seconds default

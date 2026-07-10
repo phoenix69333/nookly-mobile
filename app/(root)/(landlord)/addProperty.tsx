@@ -1,6 +1,10 @@
+// app/screens/AddListing.tsx
+import LocationPicker, { PickedLocation } from "@/components/LocationPicker";
 import { Colors } from "@/constants/Colors";
+import { categories, facilities } from "@/constants/data";
 import icons from "@/constants/icons";
-import { AddListing, uploadImage} from "@/lib/appwrite";
+import { AddListing, uploadImage } from "@/lib/appwrite";
+import useAuthStore from "@/store/auth.store";
 import * as ImagePicker from "expo-image-picker";
 import { ImagePickerAsset } from "expo-image-picker";
 import { router } from "expo-router";
@@ -22,16 +26,26 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { categories, facilities } from "@/constants/data";
-import useAuthStore from "@/store/auth.store";
-
 const AddPropertyScreen = () => {
   const { user } = useAuthStore();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? "light"];
 
   const [loadingUser, setLoadingUser] = useState(true);
+const [mapPickerVisible, setMapPickerVisible] = useState(false);
+const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
 
+const handleLocationPicked = (loc: PickedLocation) => {
+  // ALWAYS store the coords — this is the source of truth
+  setCoords({ latitude: loc.latitude, longitude: loc.longitude });
+
+  // Auto-fill the address fields — landlord can still edit these labels,
+  // but coords stay locked to the pin
+if (loc.houseNumber && !houseNumber.trim()) setHouseNumber(loc.houseNumber);
+  if (loc.streetName && !streetName.trim()) setStreetName(loc.streetName);
+  if (loc.suburb && !neighbourhood.trim()) setNeighbourhood(loc.suburb);
+  if (loc.city && !cityTown.trim()) setCityTown(loc.city);
+};
   // Form state
   const [propertyName, setPropertyName] = useState("");
   const [type, setType] = useState("");
@@ -50,6 +64,7 @@ const AddPropertyScreen = () => {
   const [bedrooms, setBedrooms] = useState("");
   const [roomFor, setRoomFor] = useState("");
   const [bathrooms, setBathrooms] = useState("");
+  const [totalSlots, setTotalSlots] = useState("");
 
   // Curfew state
   const [curfew, setCurfew] = useState("");
@@ -61,6 +76,7 @@ const AddPropertyScreen = () => {
   const [facilitiesModalVisible, setFacilitiesModalVisible] = useState(false);
 
   const [images, setImages] = useState<ImagePickerAsset[]>([]);
+  const [videos, setVideos] = useState<ImagePickerAsset[]>([]);
   const [loading, setLoading] = useState(false);
 
   // Modals for success and error messages
@@ -108,10 +124,10 @@ const AddPropertyScreen = () => {
     }
   };
 
+
   const removeImage = (index: number) => {
     setImages((prev) => prev.filter((_, i) => i !== index));
   };
-
 
   const toggleFacility = (facilityTitle: string) => {
     setSelectedFacilities((prev) => {
@@ -137,6 +153,14 @@ const AddPropertyScreen = () => {
     ) {
       Alert.alert("Error", "Please fill all required fields");
       return false;
+    }
+
+    // ✅ Tenant slots validation for Boarding and House
+    if (type === "Boarding" || type === "House") {
+      if (!totalSlots || parseInt(totalSlots) <= 0) {
+        Alert.alert("Error", "Please enter the number of tenant slots");
+        return false;
+      }
     }
 
     // Boarding house specific validations
@@ -186,6 +210,11 @@ const AddPropertyScreen = () => {
         Alert.alert("Error", "Please enter a valid number of people");
         return false;
       }
+    }
+
+        if (!coords) {
+      Alert.alert("Error", "Please pin the property location on the map");
+      return false;
     }
 
     return true;
@@ -242,9 +271,23 @@ const AddPropertyScreen = () => {
         creatorId: user.accountId,
       };
 
+      // Pinned map coordinates — source of truth for the tenant map,
+      // stored even if the landlord edits the address label
+      if (coords) {
+        listingData.latitude = coords.latitude;
+        listingData.longitude = coords.longitude;
+      }
+
       // Add price threshold if provided
       if (priceThreshold && priceThreshold.trim() !== "") {
         listingData.priceThreshold = Number(priceThreshold);
+      }
+
+      // Add totalSlots for Boarding and House
+      if (type === "Boarding" || type === "House") {
+        listingData.totalSlots = Number(totalSlots);
+        listingData.occupiedSlots = 0;
+        listingData.availableSlots = Number(totalSlots);
       }
 
       // Add boarding house specific fields
@@ -289,10 +332,12 @@ const AddPropertyScreen = () => {
     setBedrooms("");
     setBathrooms("");
     setRoomFor("");
+    setTotalSlots("");
     setCurfew("");
     setCurfewAmPm("");
     setSelectedFacilities([]);
     setImages([]);
+    setCoords(null);
   };
 
   // Property Type Modal with Icons
@@ -403,6 +448,7 @@ const AddPropertyScreen = () => {
       </View>
     </Modal>
   );
+
   // Curfew Modal
   const renderCurfewModal = () => (
     <Modal
@@ -656,7 +702,6 @@ const AddPropertyScreen = () => {
           className="rounded-3xl p-6 w-[85%] items-center"
           style={{ backgroundColor: theme.navBackground }}
         >
-          {/* Success Icon */}
           <View
             className="w-20 h-20 rounded-full items-center justify-center mb-4"
             style={{ backgroundColor: theme.primary[300] + "20" }}
@@ -678,7 +723,6 @@ const AddPropertyScreen = () => {
             Your property has been listed successfully
           </Text>
 
-          {/* Buttons */}
           <TouchableOpacity
             onPress={() => {
               setSuccessModalVisible(false);
@@ -727,7 +771,6 @@ const AddPropertyScreen = () => {
           className="rounded-3xl p-6 w-[85%] items-center"
           style={{ backgroundColor: theme.navBackground }}
         >
-          {/* Error Icon */}
           <View
             className="w-20 h-20 rounded-full items-center justify-center mb-4"
             style={{ backgroundColor: theme.danger + "20" }}
@@ -817,7 +860,7 @@ const AddPropertyScreen = () => {
 
           {/* Form Fields */}
           <View className="px-6">
-            {/* Property Name with icon */}
+            {/* Property Name */}
             <View className="mb-4">
               <Text
                 className="text-sm font-rubik-medium mb-1"
@@ -848,7 +891,7 @@ const AddPropertyScreen = () => {
               </View>
             </View>
 
-            {/* Property Type - Dropdown */}
+            {/* Property Type */}
             <View className="mb-4">
               <Text
                 className="text-sm font-rubik-medium mb-1"
@@ -896,7 +939,33 @@ const AddPropertyScreen = () => {
               />
             </View>
 
-            {/* Address Breakdown */}
+<TouchableOpacity
+  onPress={() => setMapPickerVisible(true)}
+  className="p-4 rounded-xl border mb-1 flex-row items-center justify-center"
+  style={{ borderColor: theme.primary[300], backgroundColor: theme.primary[100] }}
+>
+  <Text className="font-rubik-bold" style={{ color: theme.text }}>
+    {coords ? "Location pinned — tap to change" : "Pick location on map (recommended)"}
+  </Text>
+</TouchableOpacity>
+
+<Text
+  className="font-rubik text-xs mb-3 text-center"
+  style={{ color: theme.text + "50" }}
+>
+  {coords
+    ? "Location saved. Picking with the map may require manual tweaking of the address below — feel free to edit it. Your pinned map location will not change."
+    : "Using the map picker makes your property clearly visible on the tenants' map. You can still type the address manually below."}
+</Text>
+
+<LocationPicker
+  visible={mapPickerVisible}
+  onClose={() => setMapPickerVisible(false)}
+  onConfirm={handleLocationPicked}
+  initialCoords={coords}
+/>
+
+            {/* Address */}
             <View className="mb-4">
               <Text
                 className="text-sm font-rubik-medium mb-2"
@@ -905,7 +974,6 @@ const AddPropertyScreen = () => {
                 Address
               </Text>
 
-              {/* House Number */}
               <View
                 className="flex-row items-center border rounded-lg mb-2"
                 style={{
@@ -928,7 +996,6 @@ const AddPropertyScreen = () => {
                 />
               </View>
 
-              {/* Street Name */}
               <TextInput
                 placeholder="Street Name (e.g. Hay Rd)"
                 placeholderTextColor={theme.muted + "80"}
@@ -942,7 +1009,6 @@ const AddPropertyScreen = () => {
                 }}
               />
 
-              {/* Neighbourhood */}
               <TextInput
                 placeholder="Neighbourhood (e.g. ShashiView)"
                 placeholderTextColor={theme.muted + "80"}
@@ -956,7 +1022,6 @@ const AddPropertyScreen = () => {
                 }}
               />
 
-              {/* City/Town */}
               <TextInput
                 placeholder="City/Town (e.g. Bindura)"
                 placeholderTextColor={theme.muted + "80"}
@@ -970,7 +1035,6 @@ const AddPropertyScreen = () => {
                 }}
               />
 
-              {/* Preview of combined address */}
               {getFullAddress() && (
                 <Text className="text-xs mt-2" style={{ color: theme.muted }}>
                   Full address: {getFullAddress()}
@@ -1015,7 +1079,7 @@ const AddPropertyScreen = () => {
               </View>
             </View>
 
-            {/* Price Threshold - New Field */}
+            {/* Price Threshold */}
             <View className="mb-4">
               <Text
                 className="text-sm font-rubik-medium mb-1"
@@ -1091,7 +1155,7 @@ const AddPropertyScreen = () => {
               </View>
             </View>
 
-            {/* Bedrooms & Bathrooms row */}
+            {/* Bedrooms & Bathrooms */}
             <View className="flex-row gap-4 mb-4">
               <View className="flex-1">
                 <Text
@@ -1137,6 +1201,48 @@ const AddPropertyScreen = () => {
               </View>
             </View>
 
+            {/* ✅ Tenant Slots - Show for BOTH Boarding AND House */}
+            {(type === "Boarding" || type === "House") && (
+              <View className="mb-4">
+                <Text
+                  className="text-sm font-rubik-medium mb-1"
+                  style={{ color: theme.text }}
+                >
+                  Number of Tenant Slots
+                </Text>
+                <View
+                  className="flex-row items-center border rounded-lg"
+                  style={{
+                    borderColor: theme.title,
+                    backgroundColor: theme.navBackground,
+                  }}
+                >
+                  <Image
+                    source={icons.person}
+                    className="w-5 h-5 ml-3"
+                    style={{ tintColor: theme.muted }}
+                  />
+                  <TextInput
+                    placeholder="e.g., 4 (number of tenants allowed)"
+                    placeholderTextColor={theme.muted + "80"}
+                    value={totalSlots}
+                    onChangeText={setTotalSlots}
+                    keyboardType="numeric"
+                    className="flex-1 px-4 py-3"
+                    style={{ color: theme.text }}
+                  />
+                </View>
+                <Text
+                  className="text-xs mt-1"
+                  style={{ color: theme.muted + "80" }}
+                >
+                  {type === "Boarding"
+                    ? "Set the maximum number of tenants for this boarding house"
+                    : "Set the maximum number of tenants for this house"}
+                </Text>
+              </View>
+            )}
+
             {/* Boarding House Specific Fields */}
             {isBoardingHouse && (
               <>
@@ -1163,8 +1269,7 @@ const AddPropertyScreen = () => {
                   />
                 </View>
 
-                {/* Curfew - Modern Design */}
-                {/* Curfew - Modern Design with "No Curfew" Option */}
+                {/* Curfew */}
                 <View className="mb-4">
                   <Text
                     className="text-sm font-rubik-medium mb-2"
@@ -1237,7 +1342,7 @@ const AddPropertyScreen = () => {
                       )}
                     </TouchableOpacity>
 
-                    {/* Time Display (only show when curfew is set and not "none") */}
+                    {/* Time Display */}
                     {curfew && curfew !== "none" && (
                       <View
                         className="p-4 items-center justify-center"
@@ -1262,7 +1367,6 @@ const AddPropertyScreen = () => {
                       </View>
                     )}
 
-                    {/* Only show time selection when not "none" */}
                     {curfew !== "none" && (
                       <>
                         {/* Hour Slider */}
@@ -1347,9 +1451,7 @@ const AddPropertyScreen = () => {
                                 className="font-rubik-bold text-base"
                                 style={{
                                   color:
-                                    curfewAmPm === "AM"
-                                      ? "#FFFFFF"
-                                      : theme.text,
+                                    curfewAmPm === "AM" ? "#FFFFFF" : theme.text,
                                 }}
                               >
                                 AM
@@ -1375,9 +1477,7 @@ const AddPropertyScreen = () => {
                                 className="font-rubik-bold text-base"
                                 style={{
                                   color:
-                                    curfewAmPm === "PM"
-                                      ? "#FFFFFF"
-                                      : theme.text,
+                                    curfewAmPm === "PM" ? "#FFFFFF" : theme.text,
                                 }}
                               >
                                 PM
@@ -1443,7 +1543,6 @@ const AddPropertyScreen = () => {
                       </>
                     )}
 
-                    {/* Clear Button - only show when curfew is set and not "none" */}
                     {curfew && curfew !== "none" && (
                       <TouchableOpacity
                         onPress={() => {
@@ -1514,7 +1613,7 @@ const AddPropertyScreen = () => {
               </TouchableOpacity>
             </View>
 
-            {/* Image Upload Section */}
+            {/* Image Upload */}
             <View className="mb-6">
               <Text
                 className="text-sm font-rubik-medium mb-2"
@@ -1523,7 +1622,6 @@ const AddPropertyScreen = () => {
                 Property Images (max 3)
               </Text>
 
-              {/* Only show upload button if less than 3 images */}
               {images.length < 3 && (
                 <TouchableOpacity
                   onPress={pickImage}
@@ -1555,7 +1653,6 @@ const AddPropertyScreen = () => {
                 </TouchableOpacity>
               )}
 
-              {/* Image Previews */}
               {images.length > 0 && (
                 <View>
                   <Text
@@ -1591,7 +1688,6 @@ const AddPropertyScreen = () => {
                 </View>
               )}
 
-              {/* Optional: Show message when max images reached */}
               {images.length === 3 && (
                 <View
                   className="mt-2 py-2 px-4 rounded-lg"
@@ -1606,7 +1702,6 @@ const AddPropertyScreen = () => {
                 </View>
               )}
             </View>
-
 
             {loading && (
               <Text

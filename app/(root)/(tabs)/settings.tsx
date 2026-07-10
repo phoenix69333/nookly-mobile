@@ -116,7 +116,7 @@ export default function SettingsScreen() {
           setLoading(true);
           try {
             await logout();
-            router.replace("/sign-in");
+            router.replace("/(auth)/sign-in");
           } catch (error) {
             console.error("Logout error:", error);
             Alert.alert("Error", "Failed to logout. Please try again.");

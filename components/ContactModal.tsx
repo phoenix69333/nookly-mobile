@@ -2,8 +2,10 @@
 import { Colors } from "@/constants/Colors";
 import { getAvatarSource } from "@/constants/data";
 import { Ionicons } from "@expo/vector-icons";
-import React from "react";
+import React, { useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   Image,
   Linking,
   Modal,
@@ -32,16 +34,77 @@ const ContactModal: React.FC<ContactModalProps> = ({
 }) => {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? "light"];
+  const [loading, setLoading] = useState<"email" | "call" | "sms" | null>(null);
 
-  const handleEmail = () => {
-    Linking.openURL(`mailto:${email}`);
-    onClose();
+  const handleEmail = async () => {
+    if (!email) {
+      Alert.alert("Error", "No email address available");
+      return;
+    }
+    setLoading("email");
+    try {
+      const url = `mailto:${email}`;
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+        onClose();
+      } else {
+        Alert.alert("Error", "Cannot open email app");
+      }
+    } catch (error) {
+      console.error("Error opening email:", error);
+      Alert.alert("Error", "Failed to open email");
+    } finally {
+      setLoading(null);
+    }
   };
 
-  const handleCall = () => {
-    if (phone) {
-      Linking.openURL(`tel:${phone}`);
-      onClose();
+  const handleCall = async () => {
+    if (!phone) {
+      Alert.alert("Error", "No phone number available");
+      return;
+    }
+    setLoading("call");
+    try {
+      const url = `tel:${phone}`;
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+        onClose();
+      } else {
+        Alert.alert("Error", "Cannot make phone call");
+      }
+    } catch (error) {
+      console.error("Error making phone call:", error);
+      Alert.alert("Error", "Failed to make phone call");
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  // ✅ NEW: Handle SMS
+  const handleSMS = async () => {
+    if (!phone) {
+      Alert.alert("Error", "No phone number available");
+      return;
+    }
+    setLoading("sms");
+    try {
+      // Pre-fill a message
+      const message = `Hi ${name}, I'm interested in your property.`;
+      const url = `sms:${phone}?body=${encodeURIComponent(message)}`;
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+        onClose();
+      } else {
+        Alert.alert("Error", "Cannot open SMS app");
+      }
+    } catch (error) {
+      console.error("Error opening SMS:", error);
+      Alert.alert("Error", "Failed to open SMS");
+    } finally {
+      setLoading(null);
     }
   };
 
@@ -117,11 +180,13 @@ const ContactModal: React.FC<ContactModalProps> = ({
             {/* Email Option */}
             <TouchableOpacity
               onPress={handleEmail}
+              disabled={loading === "email"}
               className="flex-row items-center p-4 rounded-xl mb-3"
               style={{
                 backgroundColor: theme.surface,
                 borderWidth: 1,
                 borderColor: theme.muted + "20",
+                opacity: loading === "email" ? 0.6 : 1,
               }}
             >
               <View className="w-10 h-10 rounded-full items-center justify-center mr-3">
@@ -146,54 +211,114 @@ const ContactModal: React.FC<ContactModalProps> = ({
                   {email}
                 </Text>
               </View>
-              <Ionicons
-                name="arrow-forward"
-                size={20}
-                color={theme.primary[300]}
-              />
-            </TouchableOpacity>
-
-            {/* Phone Option (if available) */}
-            {phone && (
-              <TouchableOpacity
-                onPress={handleCall}
-                className="flex-row items-center p-4 rounded-xl mb-3"
-                style={{
-                  backgroundColor: theme.surface,
-                  borderWidth: 1,
-                  borderColor: theme.muted + "20",
-                }}
-              >
-                <View
-                  className="w-10 h-10 rounded-full items-center justify-center mr-3"
-                  style={{ backgroundColor: theme.primary[300] + "20" }}
-                >
-                  <Ionicons
-                    name="call-outline"
-                    size={20}
-                    color={theme.primary[300]}
-                  />
-                </View>
-                <View className="flex-1">
-                  <Text
-                    className="text-sm font-rubik-bold"
-                    style={{ color: theme.primary[300] }}
-                  >
-                    Call
-                  </Text>
-                  <Text
-                    className="text-xs mt-0.5"
-                    style={{ color: theme.muted }}
-                  >
-                    {phone}
-                  </Text>
-                </View>
+              {loading === "email" ? (
+                <ActivityIndicator size="small" color={theme.primary[300]} />
+              ) : (
                 <Ionicons
                   name="arrow-forward"
                   size={20}
                   color={theme.primary[300]}
                 />
-              </TouchableOpacity>
+              )}
+            </TouchableOpacity>
+
+            {/* Phone Option (if available) */}
+            {phone && (
+              <>
+                {/* Call Option */}
+                <TouchableOpacity
+                  onPress={handleCall}
+                  disabled={loading === "call"}
+                  className="flex-row items-center p-4 rounded-xl mb-3"
+                  style={{
+                    backgroundColor: theme.surface,
+                    borderWidth: 1,
+                    borderColor: theme.muted + "20",
+                    opacity: loading === "call" ? 0.6 : 1,
+                  }}
+                >
+                  <View
+                    className="w-10 h-10 rounded-full items-center justify-center mr-3"
+                    style={{ backgroundColor: theme.primary[300] + "20" }}
+                  >
+                    <Ionicons
+                      name="call-outline"
+                      size={20}
+                      color={theme.primary[300]}
+                    />
+                  </View>
+                  <View className="flex-1">
+                    <Text
+                      className="text-sm font-rubik-bold"
+                      style={{ color: theme.primary[300] }}
+                    >
+                      Call
+                    </Text>
+                    <Text
+                      className="text-xs mt-0.5"
+                      style={{ color: theme.muted }}
+                    >
+                      {phone}
+                    </Text>
+                  </View>
+                  {loading === "call" ? (
+                    <ActivityIndicator size="small" color={theme.primary[300]} />
+                  ) : (
+                    <Ionicons
+                      name="arrow-forward"
+                      size={20}
+                      color={theme.primary[300]}
+                    />
+                  )}
+                </TouchableOpacity>
+
+                {/* ✅ SMS Option - NEW */}
+                <TouchableOpacity
+                  onPress={handleSMS}
+                  disabled={loading === "sms"}
+                  className="flex-row items-center p-4 rounded-xl mb-3"
+                  style={{
+                    backgroundColor: theme.surface,
+                    borderWidth: 1,
+                    borderColor: theme.muted + "20",
+                    opacity: loading === "sms" ? 0.6 : 1,
+                  }}
+                >
+                  <View
+                    className="w-10 h-10 rounded-full items-center justify-center mr-3"
+                    style={{ backgroundColor: "#3B82F620" }}
+                  >
+                    <Ionicons
+                      name="chatbubble-outline"
+                      size={20}
+                      color="#3B82F6"
+                    />
+                  </View>
+                  <View className="flex-1">
+                    <Text
+                      className="text-sm font-rubik-bold"
+                      style={{ color: theme.text }}
+                    >
+                      Send SMS
+                    </Text>
+                    <Text
+                      className="text-xs mt-0.5"
+                      style={{ color: theme.muted }}
+                    >
+                      {phone}
+                    </Text>
+                  </View>
+                  {loading === "sms" ? (
+                    <ActivityIndicator size="small" color="#3B82F6" />
+                  ) : (
+                    <Ionicons
+                      name="arrow-forward"
+                      size={20}
+                      color="#3B82F6"
+                    />
+                  )}
+                </TouchableOpacity>
+              </>
             )}
 
             {/* Close Button */}

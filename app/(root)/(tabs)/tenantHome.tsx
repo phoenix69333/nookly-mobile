@@ -10,7 +10,7 @@ import {
 } from "@/lib/appwrite";
 import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { Card, FeaturedCard } from "@/components/Cards";
 import Filters from "@/components/Filters";
@@ -36,6 +36,8 @@ import useAuthStore from "@/store/auth.store";
 import { useNotificationStore } from "@/store/notification.store";
 import { getSavedAvatar } from "@/utils/avatarStorage";
 
+const STALE_TIME = 5 * 60 * 1000; // 5 minutes
+
 const getGreeting = () => {
   const hour = new Date().getHours();
   if (hour < 12) return "Good Morning";
@@ -54,8 +56,9 @@ const Home = () => {
   const [searchModalVisible, setSearchModalVisible] = useState(false);
 
   const params = useLocalSearchParams<{ filter?: string }>();
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme?? "light"];
 
-  // Get notification unread count
   const {
     loadNotifications,
     cleanupOldNotifications,
@@ -64,13 +67,10 @@ const Home = () => {
   } = useNotificationStore();
   const userId = user?.accountId;
 
-  // Load unread count on mount
-  useEffect(() => {
-    if (userId) {
-      loadNotifications(userId);
-      fetchAppwriteUnreadCount(userId);
-    }
-  }, [userId]);
+  // Track last fetch times
+  const lastNotificationsFetch = useRef<number>(0);
+  const lastFeaturedFetch = useRef<number>(0);
+  const filterRef = useRef(params.filter);
 
   useFocusEffect(
     useCallback(() => {
@@ -81,12 +81,26 @@ const Home = () => {
           return true;
         },
       );
-
       return () => subscription.remove();
     }, []),
   );
 
-  // Run cleanup on mount
+  // Single focus effect with stale check - replaces 3 separate effects
+  useFocusEffect(
+    useCallback(() => {
+      const now = Date.now();
+
+      // Only refresh notifications if stale > 5 min or first load
+      if (userId && now - lastNotificationsFetch.current > STALE_TIME) {
+        console.log("🔄 Refreshing stale notifications...");
+        loadNotifications(userId);
+        fetchAppwriteUnreadCount(userId);
+        lastNotificationsFetch.current = now;
+      }
+    }, [userId]),
+  );
+
+  // Run cleanup on mount only - no hourly interval
   useEffect(() => {
     const runCleanup = async () => {
       if (userId) {
@@ -95,26 +109,12 @@ const Home = () => {
       }
     };
     runCleanup();
-
-    // Optional: Run cleanup every hour
-    const interval = setInterval(
-      () => {
-        if (userId) {
-          cleanupOldAppwriteNotifications(userId);
-          cleanupOldNotifications(userId);
-        }
-      },
-      60 * 60 * 1000,
-    );
-
-    return () => clearInterval(interval);
   }, [userId]);
 
   const getHeaderImage = () => {
     const hour = new Date().getHours();
     if (hour >= 6 && hour < 12) return require("@/assets/images/morning.jpg");
-    if (hour >= 12 && hour < 17)
-      return require("@/assets/images/afternoon.jpg");
+    if (hour >= 12 && hour < 17) return require("@/assets/images/afternoon.jpg");
     if (hour >= 17 && hour < 20) return require("@/assets/images/sunset.jpg");
     return require("@/assets/images/night.jpg");
   };
@@ -124,19 +124,10 @@ const Home = () => {
     const interval = setInterval(() => setGreeting(getGreeting()), 60_000);
     return () => clearInterval(interval);
   }, []);
-  useFocusEffect(
-    useCallback(() => {
-      if (userId) {
-        loadNotifications(userId);
-        fetchAppwriteUnreadCount(userId);
-      }
-    }, [userId]),
-  );
 
   // Load avatar once on mount
   useEffect(() => {
     let isActive = true;
-
     const loadAvatar = async () => {
       const saved = await getSavedAvatar();
       if (isActive) {
@@ -144,20 +135,26 @@ const Home = () => {
         setLoadingAvatar(false);
       }
     };
-
     loadAvatar();
-
     return () => {
       isActive = false;
     };
   }, []);
 
-  // Fetch best properties for Featured section
-  const fetchBestProperties = async () => {
+  // Fetch best properties with stale check
+  const fetchBestProperties = async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastFeaturedFetch.current < STALE_TIME) {
+      console.log("⏭️ Skipping featured fetch - data fresh");
+      setLoadingFeatured(false);
+      return;
+    }
+
     try {
       setLoadingFeatured(true);
-      const best = await getBestProperties(6); // Get top 6 best properties
+      const best = await getBestProperties(6);
       setFeaturedProperties(best);
+      lastFeaturedFetch.current = now;
     } catch (error) {
       console.error("Error fetching best properties:", error);
       setFeaturedProperties([]);
@@ -166,12 +163,11 @@ const Home = () => {
     }
   };
 
-  // Load featured properties on mount
   useEffect(() => {
     fetchBestProperties();
   }, []);
 
-  // Get recommended properties with manual refetch
+  // Get recommended properties
   const {
     data: properties,
     refetch,
@@ -179,48 +175,22 @@ const Home = () => {
   } = useAppwrite({
     fn: getAvailableProperties,
     params: { filter: params.filter || "", query: "", limit: 6 },
-    ttl: 30000,
-    skip: false, // initial fetch on mount
+    skip: false,
   });
 
-  // 🔁 Manual refetch when filter changes
+  // Only refetch when filter actually changes
   useEffect(() => {
-    refetch({
-      filter: params.filter || "",
-      query: "",
-      limit: 6,
-    });
+    if (filterRef.current!== params.filter) {
+      filterRef.current = params.filter;
+      refetch({
+        filter: params.filter || "",
+        query: "",
+        limit: 6,
+      });
+    }
   }, [params.filter]);
 
   const handleCardPress = (id: string) => router.push(`/properties/${id}`);
-
-  // In your home screen component (where the bell icon is), add this:
-
-  useFocusEffect(
-    useCallback(() => {
-      // Refresh unread count when screen comes into focus
-      const refreshUnreadCount = async () => {
-        if (userId) {
-          await fetchAppwriteUnreadCount(userId);
-          await loadNotifications(userId);
-        }
-      };
-
-      refreshUnreadCount();
-    }, [userId, fetchAppwriteUnreadCount, loadNotifications]),
-  );
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (userId) {
-        loadNotifications(userId);
-      }
-    }, 60000); // Check every minute
-
-    return () => clearInterval(interval);
-  }, [userId, loadNotifications]);
-  const colorScheme = useColorScheme();
-  const theme = Colors[colorScheme ?? "light"];
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }}>
@@ -249,13 +219,13 @@ const Home = () => {
         {/* Overlay User Info */}
         <View className="absolute inset-0 flex-row items-center justify-between px-6 pt-2">
           <View className="flex-row items-center">
-            {!loadingAvatar ? (
+            {!loadingAvatar? (
               <TouchableOpacity
                 onPress={() => router.push("/profile")}
                 className="shadow-lg"
               >
                 <Image
-                  source={user?.avatar ? { uri: user.avatar } : icons.person}
+                  source={user?.avatar? { uri: user.avatar } : icons.person}
                   className="w-14 h-14 rounded-full border-2 border-white"
                 />
               </TouchableOpacity>
@@ -274,7 +244,6 @@ const Home = () => {
             </View>
           </View>
 
-          {/* Bell Icon with Notification Badge */}
           <TouchableOpacity
             onPress={() => router.push("/notifications")}
             className="bg-white/20 p-2.5 rounded-full relative"
@@ -287,7 +256,7 @@ const Home = () => {
             {totalUnreadCount > 0 && (
               <View className="absolute -top-1 -right-1 bg-red-500 rounded-full min-w-[18px] h-[18px] px-1 items-center justify-center">
                 <Text className="text-white text-xs font-bold">
-                  {totalUnreadCount > 99 ? "99+" : totalUnreadCount}
+                  {totalUnreadCount > 99? "99+" : totalUnreadCount}
                 </Text>
               </View>
             )}
@@ -306,17 +275,16 @@ const Home = () => {
           <Card item={item} onPress={() => handleCardPress(item.$id)} />
         )}
         ListEmptyComponent={
-          loading ? (
+          loading? (
             <View className="items-center justify-center py-10">
               <ActivityIndicator size="large" color={theme.title} />
             </View>
-          ) : !properties || properties.length === 0 ? (
+          ) :!properties || properties.length === 0? (
             <NoResults />
           ) : null
         }
         ListHeaderComponent={() => (
           <View className="px-5">
-            {/* Search Button */}
             <TouchableOpacity
               onPress={() => setSearchModalVisible(true)}
               className="flex-row items-center px-4 py-3 rounded-full mb-3"
@@ -339,12 +307,10 @@ const Home = () => {
               </Text>
             </TouchableOpacity>
 
-            {/* Quick Actions */}
             <View className="mb-6">
               <QuickActions />
             </View>
 
-            {/* Featured Section */}
             <View className="mb-6">
               <View className="flex-row items-center justify-between mb-4">
                 <View>
@@ -371,11 +337,11 @@ const Home = () => {
                 </TouchableOpacity>
               </View>
 
-              {loadingFeatured ? (
+              {loadingFeatured? (
                 <View className="h-48 items-center justify-center">
                   <ActivityIndicator size="large" color={theme.primary[300]} />
                 </View>
-              ) : featuredProperties.length === 0 ? (
+              ) : featuredProperties.length === 0? (
                 <View
                   className="h-48 items-center justify-center rounded-2xl"
                   style={{ backgroundColor: theme.surface }}
@@ -417,7 +383,6 @@ const Home = () => {
 
             <View className="flex-row items-center justify-between mb-3">
               <View>
-                {/* Filters */}
                 <View className="mb-4">
                   <Filters />
                 </View>
